@@ -30,13 +30,15 @@ final class AudioRecorder: NSObject, ObservableObject {
             throw RecorderError.sessionConfigFailed(error)
         }
 
-        // 16 kHz mono PCM is what whisper.cpp expects after preprocessing; .m4a/AAC keeps the file small
-        // and we'll decode to PCM at transcription time.
+        // 16 kHz mono 16-bit linear PCM in a WAV container — the exact format Whisper expects
+        // internally, so WhisperKit can ingest it without re-decoding or resampling.
         let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: 16_000,
             AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsFloatKey: false,
         ]
 
         let url = Self.makeRecordingURL()
@@ -103,6 +105,6 @@ final class AudioRecorder: NSObject, ObservableObject {
             .appendingPathComponent("Recordings", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let name = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        return dir.appendingPathComponent("\(name).m4a")
+        return dir.appendingPathComponent("\(name).wav")
     }
 }
