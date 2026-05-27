@@ -110,9 +110,17 @@ struct RootView: View {
             Text("Tap to record")
                 .foregroundStyle(.secondary)
         case .recording:
-            Text(String(format: "Recording  %.1fs", session.recorder.elapsed))
-                .monospacedDigit()
-                .foregroundStyle(.red)
+            VStack(spacing: 6) {
+                Text(String(format: "Recording  %.1fs", session.recorder.elapsed))
+                    .monospacedDigit()
+                    .foregroundStyle(.red)
+                LevelMeter(peakDB: session.recorder.peakLevel)
+                    .frame(width: 200, height: 8)
+                Text(String(format: "peak: %.0f dB", session.recorder.peakLevel))
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
         case .transcribing:
             HStack { ProgressView(); Text("Transcribing on device…") }
         case .summarizing:
@@ -155,6 +163,28 @@ struct ResultView: View {
         .padding()
         .background(Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+struct LevelMeter: View {
+    let peakDB: Float
+
+    /// Map -60 dB → 0%, 0 dB → 100%.
+    private var fraction: Double {
+        let clamped = max(-60, min(0, peakDB))
+        return Double((clamped + 60) / 60)
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color(.tertiarySystemFill))
+                Capsule()
+                    .fill(LinearGradient(colors: [.green, .yellow, .red], startPoint: .leading, endPoint: .trailing))
+                    .frame(width: geo.size.width * fraction)
+                    .animation(.easeOut(duration: 0.1), value: fraction)
+            }
+        }
     }
 }
 

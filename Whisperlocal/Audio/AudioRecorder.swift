@@ -11,6 +11,9 @@ final class AudioRecorder: NSObject, ObservableObject {
 
     @Published private(set) var isRecording = false
     @Published private(set) var elapsed: TimeInterval = 0
+    /// Live peak level in dBFS while recording. -160 means silence (mic likely disconnected
+    /// or denied); typical speech sits between -30 and -5 dB.
+    @Published private(set) var peakLevel: Float = -160
 
     private var recorder: AVAudioRecorder?
     private var startedAt: Date?
@@ -68,10 +71,14 @@ final class AudioRecorder: NSObject, ObservableObject {
     }
 
     private func startTimer() {
-        timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, let start = self.startedAt else { return }
                 self.elapsed = Date().timeIntervalSince(start)
+                if let r = self.recorder {
+                    r.updateMeters()
+                    self.peakLevel = r.peakPower(forChannel: 0)
+                }
             }
         }
     }
