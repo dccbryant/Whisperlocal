@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 
@@ -27,9 +28,17 @@ final class SessionStore: ObservableObject {
     let summarizer: SummarizationService
 
     private let transcriber = WhisperKitTranscriptionService()
+    private var cancellables = Set<AnyCancellable>()
 
     init(summarizer: SummarizationService = MockSummarizationService()) {
         self.summarizer = summarizer
+
+        // Forward the recorder's @Published changes so the view (which observes SessionStore
+        // via @EnvironmentObject) re-renders when recorder.elapsed / isRecording change.
+        recorder.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+
         Task { await loadModel() }
     }
 
