@@ -12,30 +12,34 @@ final class SessionStore: ObservableObject {
         case failed(String)
     }
 
+    enum ModelState: Equatable {
+        case loading
+        case ready
+        case failed(String)
+    }
+
     @Published var stage: Stage = .idle
+    @Published var modelState: ModelState = .loading
     @Published var recordings: [Recording] = []
     @Published var current: Recording?
-    @Published var modelReady: Bool = ModelStore.isAvailable
 
     let recorder = AudioRecorder()
-    let downloader = ModelDownloader()
     let summarizer: SummarizationService
 
-    private var transcriber: TranscriptionService
+    private let transcriber = WhisperKitTranscriptionService()
 
     init(summarizer: SummarizationService = MockSummarizationService()) {
         self.summarizer = summarizer
-        if let url = ModelStore.resolvedURL() {
-            self.transcriber = WhisperCppTranscriptionService(modelURL: url)
-        } else {
-            self.transcriber = MockTranscriptionService()
-        }
+        Task { await loadModel() }
     }
 
-    func refreshTranscriberIfReady() {
-        if let url = ModelStore.resolvedURL() {
-            transcriber = WhisperCppTranscriptionService(modelURL: url)
-            modelReady = true
+    func loadModel() async {
+        modelState = .loading
+        do {
+            try await transcriber.load()
+            modelState = .ready
+        } catch {
+            modelState = .failed(error.localizedDescription)
         }
     }
 

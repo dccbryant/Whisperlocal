@@ -7,7 +7,8 @@ struct RootView: View {
         NavigationStack {
             VStack(spacing: 24) {
                 header
-                if session.modelReady {
+                switch session.modelState {
+                case .ready:
                     recordButton
                     statusView
                     if let current = session.current {
@@ -15,13 +16,47 @@ struct RootView: View {
                     } else {
                         Spacer()
                     }
-                } else {
-                    ModelOnboardingView(downloader: session.downloader)
+                case .loading:
+                    modelLoadingView
+                    Spacer()
+                case .failed(let message):
+                    modelFailedView(message: message)
                     Spacer()
                 }
             }
             .padding()
             .navigationTitle("Whisperlocal")
+        }
+    }
+
+    private var modelLoadingView: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .controlSize(.large)
+            Text("Preparing on-device model…")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Text("First launch downloads the model (~150 MB). After that, everything runs offline.")
+                .font(.caption)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal)
+        }
+    }
+
+    private func modelFailedView(message: String) -> some View {
+        VStack(spacing: 12) {
+            Label("Model load failed", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+            Text(message)
+                .font(.caption)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
+            Button("Try again") {
+                Task { await session.loadModel() }
+            }
+            .buttonStyle(.bordered)
         }
     }
 
