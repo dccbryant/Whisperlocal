@@ -24,7 +24,7 @@ final class AudioRecorder: NSObject, ObservableObject {
 
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
+            try session.setCategory(.record, mode: .measurement, options: [])
             try session.setActive(true)
         } catch {
             throw RecorderError.sessionConfigFailed(error)
@@ -69,6 +69,11 @@ final class AudioRecorder: NSObject, ObservableObject {
         isRecording = false
         elapsed = 0
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if let url, let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let size = attrs[.size] as? Int {
+            // At 16 kHz mono 16-bit PCM, expect ~32 KB per second. Anything tiny means silence.
+            print("[AudioRecorder] saved \(url.lastPathComponent): \(size) bytes (~\(size / 32_000)s of expected audio)")
+        }
         return url
     }
 
