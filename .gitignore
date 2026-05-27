@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdata
+*.xcuserdatad/
+xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Xcode project — re-generated from project.yml via XcodeGen
+Whisperlocal.xcodeproj/
+Whisperlocal.xcworkspace/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+Package.resolved
+
+# CocoaPods (if ever added)
+Pods/
+
+# Local model files (downloaded at runtime; do not commit)
+Whisperlocal/Resources/Models/
+*.bin
+*.gguf
+*.ggml
