@@ -7,11 +7,16 @@ struct RootView: View {
         NavigationStack {
             VStack(spacing: 24) {
                 header
-                recordButton
-                statusView
-                if let current = session.current {
-                    ResultView(recording: current)
+                if session.modelReady {
+                    recordButton
+                    statusView
+                    if let current = session.current {
+                        ResultView(recording: current)
+                    } else {
+                        Spacer()
+                    }
                 } else {
+                    ModelOnboardingView(downloader: session.downloader)
                     Spacer()
                 }
             }

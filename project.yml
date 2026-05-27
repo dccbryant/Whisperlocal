@@ -12,6 +12,11 @@ settings:
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
 
+packages:
+  whisper:
+    url: https://github.com/ggerganov/whisper.cpp
+    branch: master
+
 targets:
   Whisperlocal:
     type: application
@@ -20,6 +25,9 @@ targets:
       - path: Whisperlocal
     resources:
       - path: Whisperlocal/Resources
+    dependencies:
+      - package: whisper
+        product: whisper
     info:
       path: Whisperlocal/Info.plist
       properties:
@@ -35,9 +43,7 @@ targets:
         ITSAppUsesNonExemptEncryption: false
     entitlements:
       path: Whisperlocal/Whisperlocal.entitlements
-      properties:
-        com.apple.security.network.client: false
-        com.apple.security.network.server: false
+      properties: {}
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.whisperlocal.app

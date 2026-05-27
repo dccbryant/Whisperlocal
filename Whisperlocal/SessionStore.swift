@@ -15,17 +15,28 @@ final class SessionStore: ObservableObject {
     @Published var stage: Stage = .idle
     @Published var recordings: [Recording] = []
     @Published var current: Recording?
+    @Published var modelReady: Bool = ModelStore.isAvailable
 
     let recorder = AudioRecorder()
-    let transcriber: TranscriptionService
+    let downloader = ModelDownloader()
     let summarizer: SummarizationService
 
-    init(
-        transcriber: TranscriptionService = MockTranscriptionService(),
-        summarizer: SummarizationService = MockSummarizationService()
-    ) {
-        self.transcriber = transcriber
+    private var transcriber: TranscriptionService
+
+    init(summarizer: SummarizationService = MockSummarizationService()) {
         self.summarizer = summarizer
+        if let url = ModelStore.resolvedURL() {
+            self.transcriber = WhisperCppTranscriptionService(modelURL: url)
+        } else {
+            self.transcriber = MockTranscriptionService()
+        }
+    }
+
+    func refreshTranscriberIfReady() {
+        if let url = ModelStore.resolvedURL() {
+            transcriber = WhisperCppTranscriptionService(modelURL: url)
+            modelReady = true
+        }
     }
 
     func startRecording() async {
