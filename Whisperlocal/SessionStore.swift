@@ -27,14 +27,12 @@ final class SessionStore: ObservableObject {
     let recorder = AudioRecorder()
     let summarizer: SummarizationService
 
-    private let transcriber = WhisperKitTranscriptionService()
+    private let transcriber = DiarizingTranscriptionService()
     private var cancellables = Set<AnyCancellable>()
 
-    init(summarizer: SummarizationService = MockSummarizationService()) {
+    init(summarizer: SummarizationService = SummarizationFactory.make()) {
         self.summarizer = summarizer
 
-        // Forward the recorder's @Published changes so the view (which observes SessionStore
-        // via @EnvironmentObject) re-renders when recorder.elapsed / isRecording change.
         recorder.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
@@ -71,12 +69,12 @@ final class SessionStore: ObservableObject {
 
         stage = .transcribing
         do {
-            let text = try await transcriber.transcribe(audioAt: url)
-            rec.transcript = text
+            let segments = try await transcriber.transcribe(audioAt: url)
+            rec.segments = segments
             current = rec
 
             stage = .summarizing
-            let summary = try await summarizer.summarize(text)
+            let summary = try await summarizer.summarize(rec.flatTranscript)
             rec.summary = summary
             current = rec
             recordings.insert(rec, at: 0)

@@ -1,53 +1,114 @@
+import AVFoundation
 import Foundation
+import SpeakerKit
 import WhisperKit
 
-/// On-device transcription via WhisperKit (CoreML-backed Whisper on the Neural Engine).
+protocol TranscriptionService {
+    /// Transcribe the audio file, splitting into per-speaker segments where possible.
+    func transcribe(audioAt url: URL) async throws -> [TranscriptSegment]
+}
+
+/// On-device transcription with speaker diarization.
 ///
-/// WhisperKit handles audio decoding (m4a/wav/mp3/flac) and model download on its own.
-/// We just hold the pipeline instance and forward calls.
-actor WhisperKitTranscriptionService: TranscriptionService {
+/// Pipeline:
+///   1. AudioFileReader → [Float] at 16 kHz mono.
+///   2. SpeakerKit.diarize(...) → SpeakerSegment list (start/end + speaker ID).
+///   3. For each segment, slice the [Float] and run WhisperKit.transcribe(audioArray:).
+///   4. Produce TranscriptSegment list with friendly "Speaker N" labels.
+///
+/// If diarization fails or finds nothing, falls back to a single full-audio transcription.
+actor DiarizingTranscriptionService: TranscriptionService {
     enum ServiceError: Error, LocalizedError {
         case notReady
         case empty
 
         var errorDescription: String? {
             switch self {
-            case .notReady: return "WhisperKit isn't loaded yet."
+            case .notReady: return "Models aren't loaded yet."
             case .empty: return "Whisper produced no text."
             }
         }
     }
 
-    /// Recommended for English-only on iPhone: a small CoreML Whisper variant. WhisperKit
-    /// downloads this from Hugging Face on first init, then runs fully offline.
-    static let defaultModel = "openai_whisper-base.en"
+    static let defaultWhisperModel = "openai_whisper-base.en"
 
-    private var pipeline: WhisperKit?
+    private var whisper: WhisperKit?
+    private var speakers: SpeakerKit?
 
-    func load(modelName: String = defaultModel) async throws {
-        if pipeline != nil { return }
-        // WhisperKit auto-detects the simulator and forces .cpuOnly internally, so we don't
-        // need a custom ModelComputeOptions here. On real devices it uses the Neural Engine.
-        pipeline = try await WhisperKit(model: modelName)
+    func load() async throws {
+        if whisper == nil {
+            whisper = try await WhisperKit(model: Self.defaultWhisperModel)
+        }
+        if speakers == nil {
+            speakers = try await SpeakerKit()
+        }
     }
 
-    var isLoaded: Bool { pipeline != nil }
+    var isLoaded: Bool { whisper != nil && speakers != nil }
 
-    func transcribe(audioAt url: URL) async throws -> String {
-        guard let pipeline else { throw ServiceError.notReady }
+    func transcribe(audioAt url: URL) async throws -> [TranscriptSegment] {
+        guard let whisper, let speakers else { throw ServiceError.notReady }
 
-        // Feed WhisperKit raw [Float] samples instead of a file path. The file-path API has
-        // shown decode flakiness on simulator -- producing $$$$ hallucinations despite a
-        // well-formed PCM WAV input. Reading + converting ourselves removes that variable.
         let samples = try AudioFileReader.readMono16kFloats(at: url)
-        let rms = samples.isEmpty
-            ? 0
-            : sqrt(samples.reduce(into: Float(0)) { $0 += $1 * $1 } / Float(samples.count))
-        print("[WhisperKit] samples=\(samples.count) rms=\(String(format: "%.4f", rms)) (>0.01 = real speech)")
+        guard !samples.isEmpty else { throw ServiceError.empty }
 
-        let results = try await pipeline.transcribe(audioArray: samples)
-        let text = results.map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { throw ServiceError.empty }
-        return text
+        let diarization = try await speakers.diarize(audioArray: samples)
+
+        // No speakers detected → single-shot transcribe.
+        if diarization.segments.isEmpty {
+            let results = try await whisper.transcribe(audioArray: samples)
+            let text = results.map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { throw ServiceError.empty }
+            return [TranscriptSegment(speakerLabel: "Speaker 1", text: text, start: 0, end: Double(samples.count) / 16_000)]
+        }
+
+        // Map raw SpeakerKit cluster IDs (which may be sparse, e.g. 0, 3, 7) to dense 1-based
+        // labels in order of first appearance, matching what a user expects to read.
+        var labelMap: [Int: Int] = [:]
+        var nextLabel = 1
+
+        var out: [TranscriptSegment] = []
+        for seg in diarization.segments {
+            // Need a single speaker ID for the segment; skip ambiguous segments.
+            guard let speakerId = seg.speaker.speakerId else { continue }
+
+            let label: Int
+            if let existing = labelMap[speakerId] {
+                label = existing
+            } else {
+                label = nextLabel
+                labelMap[speakerId] = nextLabel
+                nextLabel += 1
+            }
+
+            let startSample = max(0, Int(seg.startTime * 16_000))
+            let endSample = min(samples.count, Int(seg.endTime * 16_000))
+            guard endSample > startSample else { continue }
+            // Skip tiny segments (< 200 ms) — Whisper hallucinates on those.
+            if endSample - startSample < 3_200 { continue }
+
+            let slice = Array(samples[startSample..<endSample])
+            let results = try await whisper.transcribe(audioArray: slice)
+            let text = results.map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+
+            out.append(TranscriptSegment(
+                speakerLabel: "Speaker \(label)",
+                text: text,
+                start: TimeInterval(seg.startTime),
+                end: TimeInterval(seg.endTime)
+            ))
+        }
+
+        guard !out.isEmpty else { throw ServiceError.empty }
+        return out
+    }
+}
+
+/// Mock used until services load. Returns a placeholder transcript so the UI can be exercised.
+struct MockTranscriptionService: TranscriptionService {
+    func transcribe(audioAt url: URL) async throws -> [TranscriptSegment] {
+        try await Task.sleep(nanoseconds: 200_000_000)
+        return [TranscriptSegment(speakerLabel: "Speaker 1", text: "[mock transcript] \(url.lastPathComponent)", start: 0, end: 1)]
     }
 }

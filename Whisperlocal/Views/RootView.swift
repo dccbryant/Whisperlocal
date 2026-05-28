@@ -29,14 +29,25 @@ struct RootView: View {
         }
     }
 
+    private var header: some View {
+        VStack(spacing: 4) {
+            Text("On-device transcription & summary")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text("Nothing leaves your phone.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
     private var modelLoadingView: some View {
         VStack(spacing: 12) {
-            ProgressView()
-                .controlSize(.large)
-            Text("Preparing on-device model…")
+            ProgressView().controlSize(.large)
+            Text("Preparing on-device models…")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            Text("First launch downloads the model (~150 MB). After that, everything runs offline.")
+            Text("First launch downloads the Whisper + speaker models. After that, everything runs offline.")
                 .font(.caption)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.tertiary)
@@ -58,18 +69,6 @@ struct RootView: View {
             }
             .buttonStyle(.bordered)
         }
-    }
-
-    private var header: some View {
-        VStack(spacing: 4) {
-            Text("On-device transcription & summary")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Text("Nothing leaves your phone.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     private var recordButton: some View {
@@ -122,7 +121,7 @@ struct RootView: View {
                     .foregroundStyle(.secondary)
             }
         case .transcribing:
-            HStack { ProgressView(); Text("Transcribing on device…") }
+            HStack { ProgressView(); Text("Identifying speakers & transcribing…") }
         case .summarizing:
             HStack { ProgressView(); Text("Summarizing on device…") }
         case .done:
@@ -139,37 +138,94 @@ struct RootView: View {
 struct ResultView: View {
     let recording: Recording
 
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                headerRow
                 if let summary = recording.summary {
-                    section(title: "Summary", body: summary)
+                    section(title: "Summary", body: { Text(summary).font(.body).textSelection(.enabled) })
                 }
-                if let transcript = recording.transcript {
-                    section(title: "Transcript", body: transcript)
+                if !recording.segments.isEmpty {
+                    section(title: "Transcript", body: { transcriptBody })
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func section(title: String, body: String) -> some View {
+    private var headerRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(Self.dateFormatter.string(from: recording.createdAt))
+                    .font(.subheadline.weight(.medium))
+                Text(String(format: "%.0fs recording", recording.duration))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            ShareLink(item: shareText, subject: Text("Whisperlocal recording")) {
+                Label("Share", systemImage: "square.and.arrow.up")
+                    .labelStyle(.iconOnly)
+                    .font(.title3)
+            }
+        }
+    }
+
+    private var transcriptBody: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(recording.segments) { seg in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(seg.speakerLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tint)
+                    Text(seg.text)
+                        .font(.body)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private func section<Content: View>(title: String, @ViewBuilder body: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.headline)
-            Text(body)
-                .font(.body)
-                .textSelection(.enabled)
+            body()
         }
         .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var shareText: String {
+        var lines: [String] = []
+        lines.append("Whisperlocal — \(Self.dateFormatter.string(from: recording.createdAt))")
+        lines.append("")
+        if let summary = recording.summary {
+            lines.append("Summary")
+            lines.append(summary)
+            lines.append("")
+        }
+        if !recording.segments.isEmpty {
+            lines.append("Transcript")
+            for seg in recording.segments {
+                lines.append("\(seg.speakerLabel): \(seg.text)")
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
 struct LevelMeter: View {
     let peakDB: Float
 
-    /// Map -60 dB → 0%, 0 dB → 100%.
     private var fraction: Double {
         let clamped = max(-60, min(0, peakDB))
         return Double((clamped + 60) / 60)

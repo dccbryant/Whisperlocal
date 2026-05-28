@@ -2,7 +2,7 @@
 
 An iOS app that records audio, transcribes it, and summarizes it — **entirely on your device**. No cloud, no analytics, no telemetry.
 
-> Status: **Phase 2**. Recording + real on-device transcription via [WhisperKit](https://github.com/argmaxinc/argmax-oss-swift) work end-to-end. Summarization is still mock (Phase 3).
+> Status: **Phase 3**. End-to-end on-device pipeline: record → speaker diarization (SpeakerKit) → transcription (WhisperKit) → summarization (Apple Foundation Models). Share sheet for the result. Date/time on every recording.
 
 ## Privacy posture
 
@@ -51,9 +51,13 @@ Whisperlocal/
 ## Roadmap
 
 - **Phase 1 (done):** Scaffold + recording + mock services + UI flow.
-- **Phase 2 (done):** WhisperKit for on-device transcription. CoreML-backed, runs on the Neural Engine on supported iPhones. Model auto-downloads on first launch.
-- **Phase 3:** Integrate [llama.cpp](https://github.com/ggerganov/llama.cpp) (or Apple's Foundation Models on capable devices) for on-device summarization.
-- **Phase 4 polish:** Recording library with on-device search, export to plain text, share sheet, background processing, accessibility.
+- **Phase 2 (done):** WhisperKit for on-device transcription on the Neural Engine.
+- **Phase 3 (done):** SpeakerKit diarization, Apple Foundation Models summarization, share sheet, date/time on results.
+- **Phase 4 ideas:** Persistent recording library with on-device search, recording playback, background processing, accessibility, multilingual model option.
+
+## Apple Intelligence requirement for summarization
+
+The on-device summarizer uses Apple's `FoundationModels` framework, which needs **iOS 26+** running on an Apple Intelligence capable device (iPhone 15 Pro / Pro Max / 16 family or newer). On any other device, summarization gracefully degrades to a placeholder — transcription and diarization still work everywhere iOS 17+ runs.
 
 ## Choosing a different Whisper model
 
