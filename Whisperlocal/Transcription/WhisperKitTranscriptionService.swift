@@ -26,22 +26,9 @@ actor WhisperKitTranscriptionService: TranscriptionService {
 
     func load(modelName: String = defaultModel) async throws {
         if pipeline != nil { return }
-        // The iOS Simulator has no Neural Engine. WhisperKit's CoreML models default to the
-        // Neural Engine and produce garbage ($$$$) on simulator when CoreML silently falls back
-        // to an unsupported compute unit. Force CPU-only there. On real devices we use the
-        // default config so the Neural Engine is used for full speed.
-        #if targetEnvironment(simulator)
-        let compute = ModelComputeOptions(
-            melCompute: .cpuOnly,
-            audioEncoderCompute: .cpuOnly,
-            textDecoderCompute: .cpuOnly,
-            prefillCompute: .cpuOnly
-        )
-        let config = WhisperKitConfig(model: modelName, computeOptions: compute)
-        #else
-        let config = WhisperKitConfig(model: modelName)
-        #endif
-        pipeline = try await WhisperKit(config)
+        // WhisperKit auto-detects the simulator and forces .cpuOnly internally, so we don't
+        // need a custom ModelComputeOptions here. On real devices it uses the Neural Engine.
+        pipeline = try await WhisperKit(model: modelName)
     }
 
     var isLoaded: Bool { pipeline != nil }
