@@ -33,7 +33,17 @@ actor WhisperKitTranscriptionService: TranscriptionService {
 
     func transcribe(audioAt url: URL) async throws -> String {
         guard let pipeline else { throw ServiceError.notReady }
-        let results = try await pipeline.transcribe(audioPath: url.path)
+
+        // Feed WhisperKit raw [Float] samples instead of a file path. The file-path API has
+        // shown decode flakiness on simulator -- producing $$$$ hallucinations despite a
+        // well-formed PCM WAV input. Reading + converting ourselves removes that variable.
+        let samples = try AudioFileReader.readMono16kFloats(at: url)
+        let rms = samples.isEmpty
+            ? 0
+            : sqrt(samples.reduce(into: Float(0)) { $0 += $1 * $1 } / Float(samples.count))
+        print("[WhisperKit] samples=\(samples.count) rms=\(String(format: "%.4f", rms)) (>0.01 = real speech)")
+
+        let results = try await pipeline.transcribe(audioArray: samples)
         let text = results.map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw ServiceError.empty }
         return text
