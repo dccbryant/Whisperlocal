@@ -27,29 +27,32 @@ enum RecordingExport {
         return "Whisperlocal recording — \(date)"
     }
 
-    /// Plain text body. Uses double newlines between every logical section because plain-text
-    /// composers (notably iOS Mail) collapse single newlines into spaces.
+    /// Plain text body. Designed to read well across every share destination:
+    ///   - Apple Mail / Outlook respect single blank lines.
+    ///   - Notes / Messages / Slack respect newlines.
+    ///   - Gmail's iOS compose collapses all whitespace, so we include visible separator
+    ///     characters (──────) that survive collapse and keep section structure visible.
     static func body(for recording: Recording) -> String {
-        var parts: [String] = []
+        var lines: [String] = []
 
-        parts.append("""
-        WHISPERLOCAL
-        \(dateFormatter.string(from: recording.createdAt))
-        Duration: \(formatDuration(recording.duration))
-        """)
+        lines.append("WHISPERLOCAL · \(dateFormatter.string(from: recording.createdAt)) · \(formatDuration(recording.duration))")
+        lines.append("")
 
         if let summary = recording.summary, !summary.isEmpty {
-            parts.append("SUMMARY\n\n\(summary)")
+            lines.append("────── SUMMARY ──────")
+            lines.append(summary)
+            lines.append("")
         }
 
         if !recording.segments.isEmpty {
-            var transcriptLines: [String] = ["TRANSCRIPT"]
+            lines.append("────── TRANSCRIPT ──────")
             for seg in recording.segments {
-                transcriptLines.append("\(seg.speakerLabel):\n\(seg.text)")
+                lines.append("\(seg.speakerLabel): \(seg.text)")
             }
-            parts.append(transcriptLines.joined(separator: "\n\n"))
         }
 
-        return parts.joined(separator: "\n\n\n")
+        // Strip any trailing blank line.
+        while lines.last?.isEmpty == true { lines.removeLast() }
+        return lines.joined(separator: "\n")
     }
 }
