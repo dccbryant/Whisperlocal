@@ -2,97 +2,102 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var session: SessionStore
+    @EnvironmentObject private var library: RecordingStore
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 24) {
-                header
-                switch session.modelState {
-                case .ready:
-                    recordButton
-                    statusView
-                    if let current = session.current {
-                        ResultView(recording: current)
-                    } else {
-                        Spacer()
-                    }
-                case .loading:
-                    modelLoadingView
-                    Spacer()
-                case .failed(let message):
-                    modelFailedView(message: message)
-                    Spacer()
+            ZStack {
+                BraunPalette.background.ignoresSafeArea()
+
+                VStack(spacing: 0) {
+                    titleBar
+                    BraunDivider()
+                    Spacer(minLength: 24)
+                    mainArea
+                    Spacer(minLength: 24)
+                    BraunDivider()
+                    bottomBar
                 }
             }
-            .padding()
-            .navigationTitle("Whisperlocal")
-        }
-    }
-
-    private var header: some View {
-        VStack(spacing: 4) {
-            Text("On-device transcription & summary")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Text("Nothing leaves your phone.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-    }
-
-    private var modelLoadingView: some View {
-        VStack(spacing: 12) {
-            ProgressView().controlSize(.large)
-            Text("Preparing on-device models…")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            Text("First launch downloads the Whisper + speaker models. After that, everything runs offline.")
-                .font(.caption)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.tertiary)
-                .padding(.horizontal)
-        }
-    }
-
-    private func modelFailedView(message: String) -> some View {
-        VStack(spacing: 12) {
-            Label("Model load failed", systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
-            Text(message)
-                .font(.caption)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal)
-            Button("Try again") {
-                Task { await session.loadModel() }
+            .navigationDestination(for: Recording.self) { rec in
+                RecordingDetailView(recording: rec)
             }
-            .buttonStyle(.bordered)
+            .navigationDestination(for: LibraryRoute.self) { _ in
+                LibraryView()
+            }
         }
     }
 
-    private var recordButton: some View {
-        Button {
+    // MARK: - Title bar
+
+    private var titleBar: some View {
+        HStack {
+            Text("Whisperlocal").braunLabel(size: 11)
+            Spacer()
+            Text(session.modelState == .ready ? "Ready" : "—").braunLabel(size: 11)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
+    }
+
+    // MARK: - Main
+
+    @ViewBuilder
+    private var mainArea: some View {
+        switch session.modelState {
+        case .ready: recordingArea
+        case .loading: loadingArea
+        case .failed(let message): failedArea(message: message)
+        }
+    }
+
+    private var recordingArea: some View {
+        VStack(spacing: 28) {
+            recordDial
+            statusLine
+            if let rec = session.lastCompleted, session.stage == .done {
+                NavigationLink(value: rec) {
+                    lastRecordingChip(rec)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 24)
+                .padding(.top, 4)
+            }
+        }
+    }
+
+    private var recordDial: some View {
+        let isRec = session.recorder.isRecording
+        return Button {
             Task {
-                if session.recorder.isRecording {
+                if isRec {
                     await session.stopAndProcess()
                 } else {
-                    session.reset()
                     await session.startRecording()
                 }
             }
         } label: {
             ZStack {
                 Circle()
-                    .fill(session.recorder.isRecording ? Color.red : Color.accentColor)
-                    .frame(width: 120, height: 120)
-                Image(systemName: session.recorder.isRecording ? "stop.fill" : "mic.fill")
-                    .font(.system(size: 44, weight: .bold))
-                    .foregroundStyle(.white)
+                    .stroke(BraunPalette.foreground, lineWidth: 1.5)
+                    .frame(width: 168, height: 168)
+                Circle()
+                    .fill(isRec ? BraunPalette.recording : BraunPalette.accent)
+                    .frame(width: 132, height: 132)
+                if isRec {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(.white)
+                        .frame(width: 36, height: 36)
+                } else {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 44, weight: .medium))
+                        .foregroundStyle(.white)
+                }
             }
         }
         .buttonStyle(.plain)
         .disabled(processingDisabled)
+        .opacity(processingDisabled ? 0.5 : 1)
     }
 
     private var processingDisabled: Bool {
@@ -103,127 +108,113 @@ struct RootView: View {
     }
 
     @ViewBuilder
-    private var statusView: some View {
+    private var statusLine: some View {
         switch session.stage {
         case .idle:
-            Text("Tap to record")
-                .foregroundStyle(.secondary)
+            Text("Tap to record").braunLabel()
         case .recording:
-            VStack(spacing: 6) {
-                Text(String(format: "Recording  %.1fs", session.recorder.elapsed))
-                    .monospacedDigit()
-                    .foregroundStyle(.red)
-                LevelMeter(peakDB: session.recorder.peakLevel)
-                    .frame(width: 200, height: 8)
-                Text(String(format: "peak: %.0f dB", session.recorder.peakLevel))
-                    .font(.caption2)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
+            VStack(spacing: 10) {
+                Text(String(format: "%.1f s", session.recorder.elapsed))
+                    .braunDigit(size: 22)
+                BraunLevelMeter(peakDB: session.recorder.peakLevel)
+                    .frame(width: 220, height: 6)
             }
         case .transcribing:
-            HStack { ProgressView(); Text("Identifying speakers & transcribing…") }
-        case .summarizing:
-            HStack { ProgressView(); Text("Summarizing on device…") }
-        case .done:
-            Text("Done")
-                .foregroundStyle(.green)
-        case .failed(let message):
-            Text(message)
-                .foregroundStyle(.red)
-                .multilineTextAlignment(.center)
-        }
-    }
-}
-
-struct ResultView: View {
-    let recording: Recording
-
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f
-    }()
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                headerRow
-                if let summary = recording.summary {
-                    section(title: "Summary", body: { Text(summary).font(.body).textSelection(.enabled) })
-                }
-                if !recording.segments.isEmpty {
-                    section(title: "Transcript", body: { transcriptBody })
-                }
+            HStack(spacing: 10) {
+                ProgressView().tint(BraunPalette.foreground)
+                Text("Transcribing").braunLabel()
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        case .summarizing:
+            HStack(spacing: 10) {
+                ProgressView().tint(BraunPalette.foreground)
+                Text("Summarizing").braunLabel()
+            }
+        case .done:
+            Text("Saved").braunLabel()
+        case .failed(let m):
+            Text(m).font(.system(size: 12)).foregroundStyle(BraunPalette.recording).multilineTextAlignment(.center)
         }
     }
 
-    private var headerRow: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(Self.dateFormatter.string(from: recording.createdAt))
-                    .font(.subheadline.weight(.medium))
-                Text(String(format: "%.0fs recording", recording.duration))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    private func lastRecordingChip(_ rec: Recording) -> some View {
+        let preview: String = {
+            guard let s = rec.summary, !s.isEmpty else { return "Untitled recording" }
+            return s.count > 100 ? String(s.prefix(100)) + "…" : s
+        }()
+        return HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Latest recording").braunLabel(size: 9)
+                Text(preview)
+                    .braunBody()
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
             }
             Spacer()
-            ShareLink(item: shareText, subject: Text("Whisperlocal recording")) {
-                Label("Share", systemImage: "square.and.arrow.up")
-                    .labelStyle(.iconOnly)
-                    .font(.title3)
-            }
+            Image(systemName: "chevron.right")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(BraunPalette.secondary)
+        }
+        .padding(16)
+        .background(BraunPalette.surface)
+    }
+
+    private var loadingArea: some View {
+        VStack(spacing: 14) {
+            ProgressView().tint(BraunPalette.foreground)
+            Text("Preparing models").braunLabel()
+            Text("First launch downloads the speech and speaker models.")
+                .font(.system(size: 11))
+                .foregroundStyle(BraunPalette.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
         }
     }
 
-    private var transcriptBody: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(recording.segments) { seg in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(seg.speakerLabel)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tint)
-                    Text(seg.text)
-                        .font(.body)
-                        .textSelection(.enabled)
+    private func failedArea(message: String) -> some View {
+        VStack(spacing: 12) {
+            Text("Models unavailable").braunLabel()
+            Text(message)
+                .font(.system(size: 12))
+                .foregroundStyle(BraunPalette.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Button { Task { await session.loadModel() } } label: {
+                Text("Retry").braunLabel().padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(Rectangle().stroke(BraunPalette.foreground, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Bottom bar
+
+    private var bottomBar: some View {
+        HStack {
+            NavigationLink(value: LibraryRoute.list) {
+                HStack(spacing: 8) {
+                    Image(systemName: "list.bullet")
+                        .font(.system(size: 11, weight: .medium))
+                    Text("Library").braunLabel(size: 11)
+                    if !library.recordings.isEmpty {
+                        Text("\(library.recordings.count)")
+                            .braunDigit(size: 11)
+                            .foregroundStyle(BraunPalette.secondary)
+                    }
                 }
+                .foregroundStyle(BraunPalette.foreground)
             }
+            .buttonStyle(.plain)
+            Spacer()
+            Text("ON-DEVICE").braunLabel(size: 9)
         }
-    }
-
-    private func section<Content: View>(title: String, @ViewBuilder body: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.headline)
-            body()
-        }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-
-    private var shareText: String {
-        var lines: [String] = []
-        lines.append("Whisperlocal — \(Self.dateFormatter.string(from: recording.createdAt))")
-        lines.append("")
-        if let summary = recording.summary {
-            lines.append("Summary")
-            lines.append(summary)
-            lines.append("")
-        }
-        if !recording.segments.isEmpty {
-            lines.append("Transcript")
-            for seg in recording.segments {
-                lines.append("\(seg.speakerLabel): \(seg.text)")
-            }
-        }
-        return lines.joined(separator: "\n")
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
     }
 }
 
-struct LevelMeter: View {
+enum LibraryRoute: Hashable { case list }
+
+struct BraunLevelMeter: View {
     let peakDB: Float
 
     private var fraction: Double {
@@ -234,9 +225,9 @@ struct LevelMeter: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                Capsule().fill(Color(.tertiarySystemFill))
-                Capsule()
-                    .fill(LinearGradient(colors: [.green, .yellow, .red], startPoint: .leading, endPoint: .trailing))
+                Rectangle().fill(BraunPalette.divider)
+                Rectangle()
+                    .fill(BraunPalette.foreground)
                     .frame(width: geo.size.width * fraction)
                     .animation(.easeOut(duration: 0.1), value: fraction)
             }
@@ -245,5 +236,9 @@ struct LevelMeter: View {
 }
 
 #Preview {
-    RootView().environmentObject(SessionStore())
+    let lib = RecordingStore()
+    RootView()
+        .environmentObject(SessionStore(library: lib))
+        .environmentObject(lib)
+        .preferredColorScheme(.light)
 }

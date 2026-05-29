@@ -21,16 +21,18 @@ final class SessionStore: ObservableObject {
 
     @Published var stage: Stage = .idle
     @Published var modelState: ModelState = .loading
-    @Published var recordings: [Recording] = []
-    @Published var current: Recording?
+    /// The recording produced by the most recent record→process cycle. Cleared on next record.
+    @Published var lastCompleted: Recording?
 
     let recorder = AudioRecorder()
+    let library: RecordingStore
     let summarizer: SummarizationService
 
     private let transcriber = DiarizingTranscriptionService()
     private var cancellables = Set<AnyCancellable>()
 
-    init(summarizer: SummarizationService = SummarizationFactory.make()) {
+    init(library: RecordingStore, summarizer: SummarizationService = SummarizationFactory.make()) {
+        self.library = library
         self.summarizer = summarizer
 
         recorder.objectWillChange
@@ -53,6 +55,7 @@ final class SessionStore: ObservableObject {
     func startRecording() async {
         do {
             _ = try await recorder.start()
+            lastCompleted = nil
             stage = .recording
         } catch {
             stage = .failed("Could not start recording: \(error.localizedDescription)")
@@ -64,20 +67,24 @@ final class SessionStore: ObservableObject {
             stage = .idle
             return
         }
-        var rec = Recording(id: UUID(), url: url, createdAt: Date(), duration: recorder.elapsed)
-        current = rec
+        var rec = Recording(
+            id: UUID(),
+            audioFilename: url.lastPathComponent,
+            createdAt: Date(),
+            duration: recorder.elapsed
+        )
 
         stage = .transcribing
         do {
             let segments = try await transcriber.transcribe(audioAt: url)
             rec.segments = segments
-            current = rec
 
             stage = .summarizing
             let summary = try await summarizer.summarize(rec.flatTranscript)
             rec.summary = summary
-            current = rec
-            recordings.insert(rec, at: 0)
+
+            library.save(rec)
+            lastCompleted = rec
             stage = .done
         } catch {
             stage = .failed("Processing failed: \(error.localizedDescription)")
@@ -85,7 +92,7 @@ final class SessionStore: ObservableObject {
     }
 
     func reset() {
-        current = nil
+        lastCompleted = nil
         stage = .idle
     }
 }
