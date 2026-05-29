@@ -24,7 +24,7 @@ enum RecordingExport {
 
     static func subject(for recording: Recording) -> String {
         let date = DateFormatter.localizedString(from: recording.createdAt, dateStyle: .medium, timeStyle: .short)
-        return "Whisperlocal recording — \(date)"
+        return "Parley recording — \(date)"
     }
 
     /// Plain text body. Designed to read well across every share destination:
@@ -35,7 +35,7 @@ enum RecordingExport {
     static func body(for recording: Recording) -> String {
         var lines: [String] = []
 
-        lines.append("WHISPERLOCAL · \(dateFormatter.string(from: recording.createdAt)) · \(formatDuration(recording.duration))")
+        lines.append("PARLEY · \(dateFormatter.string(from: recording.createdAt)) · \(formatDuration(recording.duration))")
         lines.append("")
 
         if let summary = recording.summary, !summary.isEmpty {

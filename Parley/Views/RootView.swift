@@ -32,7 +32,7 @@ struct RootView: View {
 
     private var titleBar: some View {
         HStack {
-            Text("Whisperlocal").braunLabel(size: 11)
+            Text("Parley").braunLabel(size: 11)
             Spacer()
             Text(session.modelState == .ready ? "Ready" : "—").braunLabel(size: 11)
         }

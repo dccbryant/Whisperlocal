@@ -1,8 +1,10 @@
-# Whisperlocal
+# Parley
 
-An iOS app that records audio, transcribes it, and summarizes it — **entirely on your device**. No cloud, no analytics, no telemetry.
+An iOS app that records conversations, identifies speakers, transcribes them, and summarizes them — **entirely on your device**. No cloud, no analytics, no telemetry.
 
-> Status: **Phase 3**. End-to-end on-device pipeline: record → speaker diarization (SpeakerKit) → transcription (WhisperKit) → summarization (Apple Foundation Models). Share sheet for the result. Date/time on every recording.
+Originally prototyped under the name *Whisperlocal*. Renamed to Parley — an English word for a private confidential conversation.
+
+> Status: **Phase 4**. End-to-end on-device pipeline: record → speaker diarization (SpeakerKit) → transcription (WhisperKit) → summarization (Apple Foundation Models). Braun-inspired UI. Persistent recording library. Share-sheet export.
 
 ## Privacy posture
 
@@ -14,38 +16,43 @@ An iOS app that records audio, transcribes it, and summarizes it — **entirely 
 ## Requirements
 
 - macOS with Xcode 15.3+
-- iOS 17.0+ device or simulator
+- iOS 17.0+ device or simulator (real device strongly recommended — Whisper's CoreML pipeline is unreliable on the iOS Simulator)
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) — `brew install xcodegen`
 
 ## Getting started
 
 ```bash
 brew install xcodegen        # one-time
-xcodegen generate            # produces Whisperlocal.xcodeproj
-open Whisperlocal.xcodeproj
+xcodegen generate            # produces Parley.xcodeproj
+open Parley.xcodeproj
 ```
 
-In Xcode: pick an **iPhone 15 Pro** simulator in the destination picker, then ▶ Run. First launch downloads the WhisperKit model in the background; you'll see "Preparing on-device model…" until it's ready.
+In Xcode: pick your iPhone in the destination picker, then ▶ Run. First launch downloads the on-device speech and speaker models in the background; you'll see "Preparing models…" until they're ready.
 
 ## Project layout
 
 ```
-Whisperlocal/
-├── WhisperlocalApp.swift              # @main entry
-├── SessionStore.swift                 # state machine: record → transcribe → summarize
+Parley/
+├── ParleyApp.swift                # @main entry
+├── SessionStore.swift             # state machine: record → transcribe → summarize
 ├── Info.plist
-├── Whisperlocal.entitlements
+├── Parley.entitlements
 ├── Audio/
-│   └── AudioRecorder.swift            # AVAudioRecorder wrapper
+│   └── AudioRecorder.swift
 ├── Transcription/
-│   ├── TranscriptionService.swift     # protocol + mock
-│   └── WhisperKitTranscriptionService.swift  # real on-device impl
+│   ├── AudioFileReader.swift
+│   └── WhisperKitTranscriptionService.swift
 ├── Summarization/
-│   └── SummarizationService.swift     # protocol + mock (Phase 3 lands here)
+│   └── SummarizationService.swift
 ├── Models/
-│   └── Recording.swift
+│   ├── Recording.swift
+│   ├── RecordingStore.swift       # persistent library
+│   └── RecordingExport.swift      # share-sheet formatting
 └── Views/
-    └── RootView.swift
+    ├── DesignSystem.swift         # Braun 1968 palette + type
+    ├── RootView.swift
+    ├── LibraryView.swift
+    └── RecordingDetailView.swift
 ```
 
 ## Roadmap
@@ -53,7 +60,8 @@ Whisperlocal/
 - **Phase 1 (done):** Scaffold + recording + mock services + UI flow.
 - **Phase 2 (done):** WhisperKit for on-device transcription on the Neural Engine.
 - **Phase 3 (done):** SpeakerKit diarization, Apple Foundation Models summarization, share sheet, date/time on results.
-- **Phase 4 ideas:** Persistent recording library with on-device search, recording playback, background processing, accessibility, multilingual model option.
+- **Phase 4 (done):** Braun 1968 redesign, persistent recording library, formatted share output.
+- **Phase 5 ideas:** Recording playback, on-device search, accessibility audit, app icon + launch screen, multilingual model option.
 
 ## Apple Intelligence requirement for summarization
 
@@ -61,7 +69,7 @@ The on-device summarizer uses Apple's `FoundationModels` framework, which needs 
 
 ## Choosing a different Whisper model
 
-WhisperKit defaults to `openai_whisper-base.en` (small, fast, English-only). To use a different one — e.g. the more accurate `openai_whisper-small.en` or multilingual `openai_whisper-base` — change `defaultModel` in `Whisperlocal/Transcription/WhisperKitTranscriptionService.swift`. Available models are listed in WhisperKit's README.
+WhisperKit defaults to `openai_whisper-base.en` (small, fast, English-only). To use a different one — e.g. the more accurate `openai_whisper-small.en` or multilingual `openai_whisper-base` — change `defaultWhisperModel` in `Parley/Transcription/WhisperKitTranscriptionService.swift`. Available models are listed in WhisperKit's README.
 
 ## License
 

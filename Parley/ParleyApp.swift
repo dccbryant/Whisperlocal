@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct WhisperlocalApp: App {
+struct ParleyApp: App {
     @StateObject private var library = RecordingStore()
     @StateObject private var session: SessionStore
 

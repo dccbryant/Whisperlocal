@@ -1,6 +1,6 @@
-name: Whisperlocal
+name: Parley
 options:
-  bundleIdPrefix: com.whisperlocal
+  bundleIdPrefix: com.davidbryant
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
@@ -18,22 +18,22 @@ packages:
     branch: main
 
 targets:
-  Whisperlocal:
+  Parley:
     type: application
     platform: iOS
     sources:
-      - path: Whisperlocal
+      - path: Parley
     resources:
-      - path: Whisperlocal/Resources
+      - path: Parley/Resources
     dependencies:
       - package: WhisperKit
         product: WhisperKit
       - package: WhisperKit
         product: SpeakerKit
     info:
-      path: Whisperlocal/Info.plist
+      path: Parley/Info.plist
       properties:
-        CFBundleDisplayName: Whisperlocal
+        CFBundleDisplayName: Parley
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
         UILaunchScreen: {}
@@ -41,14 +41,14 @@ targets:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        NSMicrophoneUsageDescription: "Whisperlocal needs the microphone to record audio that you choose to transcribe. Audio never leaves your device."
+        NSMicrophoneUsageDescription: "Parley needs the microphone to record audio that you choose to transcribe. Audio never leaves your device."
         ITSAppUsesNonExemptEncryption: false
     entitlements:
-      path: Whisperlocal/Whisperlocal.entitlements
+      path: Parley/Parley.entitlements
       properties: {}
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.davidbryant.whisperlocal
+        PRODUCT_BUNDLE_IDENTIFIER: com.davidbryant.parley
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
-        CODE_SIGN_ENTITLEMENTS: Whisperlocal/Whisperlocal.entitlements
+        CODE_SIGN_ENTITLEMENTS: Parley/Parley.entitlements
