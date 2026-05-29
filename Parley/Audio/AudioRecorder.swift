@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import UIKit
 
 @MainActor
 final class AudioRecorder: NSObject, ObservableObject {
@@ -55,6 +56,9 @@ final class AudioRecorder: NSObject, ObservableObject {
 
         startedAt = Date()
         isRecording = true
+        // Keep the screen awake while recording so the user can see the level meter and
+        // the auto-lock doesn't cut off long recordings. We re-enable in stop().
+        UIApplication.shared.isIdleTimerDisabled = true
         startTimer()
         return url
     }
@@ -68,6 +72,7 @@ final class AudioRecorder: NSObject, ObservableObject {
         startedAt = nil
         isRecording = false
         elapsed = 0
+        UIApplication.shared.isIdleTimerDisabled = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         if let url, let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
            let size = attrs[.size] as? Int {

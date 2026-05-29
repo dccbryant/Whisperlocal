@@ -43,6 +43,8 @@ targets:
           - UIInterfaceOrientationPortrait
         NSMicrophoneUsageDescription: "Parley needs the microphone to record audio that you choose to transcribe. Audio never leaves your device."
         ITSAppUsesNonExemptEncryption: false
+        UIBackgroundModes:
+          - audio
     entitlements:
       path: Parley/Parley.entitlements
       properties: {}
