@@ -42,8 +42,9 @@ struct RecordingDetailView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 ShareLink(
-                    item: RecordingExport.body(for: recording),
-                    subject: Text(RecordingExport.subject(for: recording))
+                    item: RecordingShareItem(recording: recording),
+                    subject: Text(RecordingExport.subject(for: recording)),
+                    preview: SharePreview(RecordingExport.subject(for: recording))
                 ) {
                     Image(systemName: "square.and.arrow.up")
                         .foregroundStyle(BraunPalette.foreground)

@@ -43,13 +43,22 @@ struct AppleSummarizationService: SummarizationService {
             throw ServiceError.modelUnavailable("Apple on-device LLM unavailable: \(reason)")
         }
 
+        // The on-device model is small and tends to paraphrase/echo the transcript when
+        // asked vaguely. Instructions are deliberately blunt and prohibitive.
         let instructions = """
-        You write concise, neutral summaries of meeting and voice-note transcripts.
-        Capture only what was said. Do not invent facts. Use 2-4 sentences.
-        If multiple speakers participated, mention each by their label (e.g. Speaker 1).
+        You are a summarization assistant. You receive a transcript with lines like \
+        "Speaker 1: ...". You output ONLY a short summary in 2 to 3 sentences, under 60 words.
+
+        Hard rules:
+        - Do NOT include the words "Speaker 1", "Speaker 2", or any speaker label.
+        - Do NOT quote, paraphrase line-by-line, or repeat sentences from the transcript.
+        - Do NOT begin with "The transcript", "This is", "In this", or similar meta phrases.
+        - Write in plain prose, third person, describing the topic and any decisions or facts.
+        - If the transcript is too short or contains no substantive content, respond with: \
+        "No meaningful content to summarize."
         """
         let session = LanguageModelSession(instructions: instructions)
-        let response = try await session.respond(to: "Summarize this transcript:\n\n\(text)")
+        let response = try await session.respond(to: "Transcript:\n\(text)\n\nSummary:")
         return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
