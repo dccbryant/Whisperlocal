@@ -205,7 +205,7 @@ struct RootView: View {
             }
             .buttonStyle(.plain)
             Spacer()
-            Text("ON-DEVICE").braunLabel(size: 9)
+            Text("On-device").braunLabel(size: 11)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)

@@ -63,6 +63,8 @@ final class SessionStore: ObservableObject {
     }
 
     func stopAndProcess() async {
+        // Capture the elapsed time before stop() resets it.
+        let duration = recorder.elapsed
         guard let url = recorder.stop() else {
             stage = .idle
             return
@@ -71,7 +73,7 @@ final class SessionStore: ObservableObject {
             id: UUID(),
             audioFilename: url.lastPathComponent,
             createdAt: Date(),
-            duration: recorder.elapsed
+            duration: duration
         )
 
         stage = .transcribing
