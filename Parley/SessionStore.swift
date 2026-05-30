@@ -83,37 +83,50 @@ final class SessionStore: ObservableObject {
         }
         activity.end()
         recordingStartedAt = nil
-        await process(audioURL: url, duration: duration, createdAt: Date())
+        await process(plaintextAudioURL: url, duration: duration, createdAt: Date())
     }
 
-    /// Process an audio file the user imported from Files / share sheet. The audio file is
-    /// expected to already live inside the library's Recordings directory.
+    /// Process an audio file imported from Files / share sheet. Same pipeline as a fresh
+    /// recording but starts from a plaintext file we copy in.
     func processImported(audioURL: URL, createdAt: Date) async {
         let duration = AudioFileReader.duration(of: audioURL) ?? 0
-        await process(audioURL: audioURL, duration: duration, createdAt: createdAt)
+        await process(plaintextAudioURL: audioURL, duration: duration, createdAt: createdAt)
     }
 
-    private func process(audioURL url: URL, duration: TimeInterval, createdAt: Date) async {
-        var rec = Recording(
-            id: UUID(),
-            audioFilename: url.lastPathComponent,
-            createdAt: createdAt,
-            duration: duration
-        )
-
+    /// Pipeline: read plaintext audio from a temp location, transcribe + summarize from it,
+    /// then encrypt into the library and delete the plaintext. The transcription pass works
+    /// on the plaintext so we don't pay decrypt cost for the analysis path.
+    private func process(plaintextAudioURL url: URL, duration: TimeInterval, createdAt: Date) async {
         stage = .transcribing
         do {
             let segments = try await transcriber.transcribe(audioAt: url)
-            rec.segments = segments
 
             stage = .summarizing
-            rec.summary = try await summarizer.summarize(rec.flatTranscript)
-            rec.title = (try? await summarizer.title(for: rec.flatTranscript))
+            let summary = try await summarizer.summarize(
+                segments.map { "\($0.speakerLabel): \($0.text)" }.joined(separator: "\n")
+            )
+            let title = try? await summarizer.title(
+                for: segments.map { "\($0.speakerLabel): \($0.text)" }.joined(separator: "\n")
+            )
+
+            let filename = try library.ingestAudio(from: url)
+            var rec = Recording(
+                id: UUID(),
+                audioFilename: filename,
+                createdAt: createdAt,
+                duration: duration
+            )
+            rec.segments = segments
+            rec.summary = summary
+            rec.title = title
 
             library.save(rec)
             lastCompleted = rec
             stage = .done
         } catch {
+            // Leave the plaintext temp file alone on failure so the user could retry — but
+            // the simpler default is to clean it up.
+            try? FileManager.default.removeItem(at: url)
             stage = .failed("Processing failed: \(error.localizedDescription)")
         }
     }

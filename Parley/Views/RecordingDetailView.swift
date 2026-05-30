@@ -8,6 +8,10 @@ struct RecordingDetailView: View {
     @StateObject private var player = AudioPlayer()
     @State private var renameTarget: String?     // raw speaker label being edited
     @State private var renameDraft: String = ""
+    /// Path to a decrypted plaintext copy of the audio, written into NSTemporaryDirectory
+    /// on view appear and removed on disappear. Audio playback and waveform rendering both
+    /// stream from this URL — the encrypted file on disk is never read by AVFoundation.
+    @State private var stagedAudioURL: URL?
 
     private static let fullDate: DateFormatter = {
         let f = DateFormatter()
@@ -68,11 +72,13 @@ struct RecordingDetailView: View {
                 }
             }
         }
-        .onAppear {
-            player.load(current.audioURL(in: library.directory))
+        .task(id: current.id) {
+            await stageAudio()
         }
         .onDisappear {
             player.stop()
+            EncryptedStore.cleanupStagedAudio(stagedAudioURL)
+            stagedAudioURL = nil
         }
         .alert("Rename speaker", isPresented: Binding(
             get: { renameTarget != nil },
@@ -115,15 +121,21 @@ struct RecordingDetailView: View {
 
     private var playerBar: some View {
         VStack(spacing: 12) {
-            WaveformView(
-                url: current.audioURL(in: library.directory),
-                progress: playbackFraction,
-                onSeek: { fraction in
-                    let total = max(player.duration, current.duration)
-                    player.seek(to: fraction * total)
-                }
-            )
-            .frame(height: 56)
+            if let url = stagedAudioURL {
+                WaveformView(
+                    url: url,
+                    progress: playbackFraction,
+                    onSeek: { fraction in
+                        let total = max(player.duration, current.duration)
+                        player.seek(to: fraction * total)
+                    }
+                )
+                .frame(height: 56)
+            } else {
+                Rectangle()
+                    .fill(BraunPalette.divider.opacity(0.3))
+                    .frame(height: 56)
+            }
 
             HStack(spacing: 14) {
                 Button {
@@ -131,11 +143,12 @@ struct RecordingDetailView: View {
                 } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(BraunPalette.foreground)
+                        .foregroundStyle(stagedAudioURL == nil ? BraunPalette.secondary : BraunPalette.foreground)
                         .frame(width: 44, height: 44)
-                        .background(Rectangle().stroke(BraunPalette.foreground, lineWidth: 1))
+                        .background(Rectangle().stroke(stagedAudioURL == nil ? BraunPalette.divider : BraunPalette.foreground, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                .disabled(stagedAudioURL == nil)
 
                 Spacer()
 
@@ -179,6 +192,24 @@ struct RecordingDetailView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Audio staging
+
+    private func stageAudio() async {
+        // Clean any prior staging (e.g. user navigated between recordings).
+        EncryptedStore.cleanupStagedAudio(stagedAudioURL)
+        let encryptedURL = current.audioURL(in: library.directory)
+        let staged: URL? = await Task.detached(priority: .userInitiated) {
+            do {
+                return try EncryptedStore.stageAudio(from: encryptedURL)
+            } catch {
+                print("[Detail] failed to stage audio: \(error)")
+                return nil
+            }
+        }.value
+        stagedAudioURL = staged
+        if let staged { player.load(staged) }
     }
 
     // MARK: - Rename

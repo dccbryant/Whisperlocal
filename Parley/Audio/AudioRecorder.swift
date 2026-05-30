@@ -191,8 +191,11 @@ final class AudioRecorder: NSObject, ObservableObject {
     }
 
     private static func makeRecordingURL() -> URL {
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Recordings", isDirectory: true)
+        // Record to NSTemporaryDirectory; SessionStore encrypts the file into the library
+        // after recording stops. .completeFileProtectionUnlessOpen ensures writes succeed
+        // even when the screen locks mid-recording.
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ParleyRecording", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let name = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         return dir.appendingPathComponent("\(name).wav")
