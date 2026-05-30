@@ -4,6 +4,7 @@ struct RootView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: RecordingStore
     @State private var showIconExporter = false
+    @State private var showAbout = false
 
     var body: some View {
         NavigationStack {
@@ -29,6 +30,9 @@ struct RootView: View {
             .sheet(isPresented: $showIconExporter) {
                 IconExportSheet()
             }
+            .sheet(isPresented: $showAbout) {
+                NavigationStack { AboutView() }
+            }
             .onOpenURL { url in
                 // Audio file opened from Files / share sheet / "Open in Parley".
                 Task { await importExternalAudio(from: url, session: session, library: library) }
@@ -46,7 +50,14 @@ struct RootView: View {
                     showIconExporter = true
                 }
             Spacer()
-            Text(session.modelState == .ready ? "Ready" : "—").braunLabel(size: 11)
+            Button {
+                showAbout = true
+            } label: {
+                Text("About")
+                    .braunLabel(size: 11)
+                    .foregroundStyle(BraunPalette.foreground)
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 18)
@@ -217,7 +228,7 @@ struct RootView: View {
             }
             .buttonStyle(.plain)
             Spacer()
-            Text("On-device").braunLabel(size: 11)
+            Text("On-device only").braunLabel(size: 11)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
