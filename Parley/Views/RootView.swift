@@ -3,6 +3,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: RecordingStore
+    @State private var showIconExporter = false
 
     var body: some View {
         NavigationStack {
@@ -25,6 +26,9 @@ struct RootView: View {
             .navigationDestination(for: LibraryRoute.self) { _ in
                 LibraryView()
             }
+            .sheet(isPresented: $showIconExporter) {
+                IconExportSheet()
+            }
         }
     }
 
@@ -32,7 +36,11 @@ struct RootView: View {
 
     private var titleBar: some View {
         HStack {
-            Text("Parley").braunLabel(size: 11)
+            Text("Parley")
+                .braunLabel(size: 11)
+                .onLongPressGesture(minimumDuration: 0.6) {
+                    showIconExporter = true
+                }
             Spacer()
             Text(session.modelState == .ready ? "Ready" : "—").braunLabel(size: 11)
         }
