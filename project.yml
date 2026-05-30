@@ -45,10 +45,19 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         NSMicrophoneUsageDescription: "Parley needs the microphone to record audio that you choose to transcribe. Audio never leaves your device."
+        NSFaceIDUsageDescription: "Parley uses Face ID to keep your recordings private. Audio and transcripts never leave your device."
         ITSAppUsesNonExemptEncryption: false
         UIBackgroundModes:
           - audio
         NSSupportsLiveActivities: true
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Audio
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.audio
+              - public.mp3
+              - com.microsoft.waveform-audio
+              - public.mpeg-4-audio
     entitlements:
       path: Parley/Parley.entitlements
       properties: {}
