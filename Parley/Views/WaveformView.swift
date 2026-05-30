@@ -94,18 +94,32 @@ struct WaveformView: View {
     }
 
     private func bars(in size: CGSize) -> some View {
-        let count = model.peaks.count
+        let allPeaks = model.peaks
+        // Adapt the bar count to whatever fits: aim for at least 3pt per bar so they're
+        // visible without overflowing the container.
         let spacing: CGFloat = 1
+        let targetCount = max(20, min(allPeaks.count, Int(size.width / 3)))
+        let peaks: [Float] = {
+            if targetCount >= allPeaks.count { return allPeaks }
+            let step = Double(allPeaks.count) / Double(targetCount)
+            return (0..<targetCount).map { i in
+                let start = Int(Double(i) * step)
+                let end = min(allPeaks.count, max(start + 1, Int(Double(i + 1) * step)))
+                return allPeaks[start..<end].max() ?? 0
+            }
+        }()
+        let count = peaks.count
         let barWidth = max(1, (size.width - CGFloat(count - 1) * spacing) / CGFloat(count))
         let cutoff = Int(Double(count) * max(0, min(1, progress)))
         return HStack(alignment: .center, spacing: spacing) {
             ForEach(0..<count, id: \.self) { i in
-                let peak = model.peaks[i]
+                let peak = peaks[i]
                 let h = max(2, CGFloat(peak) * size.height)
                 Capsule()
                     .fill(i < cutoff ? BraunPalette.foreground : BraunPalette.divider)
                     .frame(width: barWidth, height: h)
             }
         }
+        .frame(width: size.width, alignment: .leading)
     }
 }

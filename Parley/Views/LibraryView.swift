@@ -1,8 +1,12 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct LibraryView: View {
     @EnvironmentObject private var library: RecordingStore
+    @EnvironmentObject private var session: SessionStore
     @State private var query: String = ""
+    @State private var showImporter = false
+    @State private var importError: String?
 
     private static let timeOnly: DateFormatter = {
         let f = DateFormatter()
@@ -75,6 +79,40 @@ struct LibraryView: View {
             ToolbarItem(placement: .principal) {
                 Text("Library").braunLabel(size: 11)
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showImporter = true
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                        .foregroundStyle(BraunPalette.foreground)
+                }
+                .disabled(session.modelState != .ready)
+            }
+        }
+        .fileImporter(
+            isPresented: $showImporter,
+            allowedContentTypes: [.audio, .mp3, .wav, .mpeg4Audio],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                Task {
+                    if let err = await importExternalAudio(from: url, session: session, library: library) {
+                        importError = err
+                    }
+                }
+            case .failure(let error):
+                importError = error.localizedDescription
+            }
+        }
+        .alert("Couldn't import file", isPresented: Binding(
+            get: { importError != nil },
+            set: { if !$0 { importError = nil } }
+        )) {
+            Button("OK", role: .cancel) { importError = nil }
+        } message: {
+            Text(importError ?? "")
         }
     }
 

@@ -55,7 +55,7 @@ enum RecordingExport {
         if !recording.segments.isEmpty {
             lines.append("────── TRANSCRIPT ──────")
             for seg in recording.segments {
-                lines.append("\(seg.speakerLabel): \(seg.text)")
+                lines.append("\(recording.displayName(for: seg.speakerLabel)): \(seg.text)")
             }
         }
 

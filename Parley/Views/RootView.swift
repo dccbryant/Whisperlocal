@@ -1,12 +1,9 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct RootView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: RecordingStore
     @State private var showIconExporter = false
-    @State private var showImporter = false
-    @State private var importError: String?
 
     var body: some View {
         NavigationStack {
@@ -32,24 +29,9 @@ struct RootView: View {
             .sheet(isPresented: $showIconExporter) {
                 IconExportSheet()
             }
-            .fileImporter(
-                isPresented: $showImporter,
-                allowedContentTypes: [.audio, .mp3, .wav, .mpeg4Audio],
-                allowsMultipleSelection: false
-            ) { result in
-                handleImport(result)
-            }
             .onOpenURL { url in
                 // Audio file opened from Files / share sheet / "Open in Parley".
-                Task { await importExternalAudio(from: url) }
-            }
-            .alert("Couldn't import file", isPresented: Binding(
-                get: { importError != nil },
-                set: { if !$0 { importError = nil } }
-            )) {
-                Button("OK", role: .cancel) { importError = nil }
-            } message: {
-                Text(importError ?? "")
+                Task { await importExternalAudio(from: url, session: session, library: library) }
             }
         }
     }
@@ -64,17 +46,6 @@ struct RootView: View {
                     showIconExporter = true
                 }
             Spacer()
-            Button { showImporter = true } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "square.and.arrow.down")
-                        .font(.system(size: 11, weight: .medium))
-                    Text("Import").braunLabel(size: 11)
-                }
-                .foregroundStyle(BraunPalette.foreground)
-            }
-            .buttonStyle(.plain)
-            .disabled(session.modelState != .ready)
-            Spacer().frame(width: 16)
             Text(session.modelState == .ready ? "Ready" : "—").braunLabel(size: 11)
         }
         .padding(.horizontal, 24)
@@ -252,37 +223,31 @@ struct RootView: View {
         .padding(.vertical, 16)
     }
 
-    // MARK: - Import
+}
 
-    private func handleImport(_ result: Result<[URL], Error>) {
-        switch result {
-        case .success(let urls):
-            guard let url = urls.first else { return }
-            Task { await importExternalAudio(from: url) }
-        case .failure(let error):
-            importError = error.localizedDescription
-        }
+/// Shared helper used by RootView's onOpenURL and by LibraryView's Import button.
+@MainActor
+func importExternalAudio(
+    from sourceURL: URL,
+    session: SessionStore,
+    library: RecordingStore
+) async -> String? {
+    guard session.modelState == .ready else {
+        return "Models are still loading. Try again in a moment."
     }
+    let needsScope = sourceURL.startAccessingSecurityScopedResource()
+    defer { if needsScope { sourceURL.stopAccessingSecurityScopedResource() } }
 
-    private func importExternalAudio(from sourceURL: URL) async {
-        guard session.modelState == .ready else {
-            importError = "Models are still loading. Try again in a moment."
-            return
-        }
-        let needsScope = sourceURL.startAccessingSecurityScopedResource()
-        defer { if needsScope { sourceURL.stopAccessingSecurityScopedResource() } }
-
-        let dir = library.directory
-        let name = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        let destination = dir.appendingPathComponent("\(name)-\(sourceURL.lastPathComponent)")
-        do {
-            try FileManager.default.copyItem(at: sourceURL, to: destination)
-        } catch {
-            importError = "Could not copy file: \(error.localizedDescription)"
-            return
-        }
-        await session.processImported(audioURL: destination, createdAt: Date())
+    let dir = library.directory
+    let name = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+    let destination = dir.appendingPathComponent("\(name)-\(sourceURL.lastPathComponent)")
+    do {
+        try FileManager.default.copyItem(at: sourceURL, to: destination)
+    } catch {
+        return "Could not copy file: \(error.localizedDescription)"
     }
+    await session.processImported(audioURL: destination, createdAt: Date())
+    return nil
 }
 
 enum LibraryRoute: Hashable { case list }
