@@ -1,9 +1,12 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct RootView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var library: RecordingStore
     @State private var showIconExporter = false
+    @State private var showImporter = false
+    @State private var importError: String?
 
     var body: some View {
         NavigationStack {
@@ -29,6 +32,25 @@ struct RootView: View {
             .sheet(isPresented: $showIconExporter) {
                 IconExportSheet()
             }
+            .fileImporter(
+                isPresented: $showImporter,
+                allowedContentTypes: [.audio, .mp3, .wav, .mpeg4Audio],
+                allowsMultipleSelection: false
+            ) { result in
+                handleImport(result)
+            }
+            .onOpenURL { url in
+                // Audio file opened from Files / share sheet / "Open in Parley".
+                Task { await importExternalAudio(from: url) }
+            }
+            .alert("Couldn't import file", isPresented: Binding(
+                get: { importError != nil },
+                set: { if !$0 { importError = nil } }
+            )) {
+                Button("OK", role: .cancel) { importError = nil }
+            } message: {
+                Text(importError ?? "")
+            }
         }
     }
 
@@ -42,6 +64,17 @@ struct RootView: View {
                     showIconExporter = true
                 }
             Spacer()
+            Button { showImporter = true } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.system(size: 11, weight: .medium))
+                    Text("Import").braunLabel(size: 11)
+                }
+                .foregroundStyle(BraunPalette.foreground)
+            }
+            .buttonStyle(.plain)
+            .disabled(session.modelState != .ready)
+            Spacer().frame(width: 16)
             Text(session.modelState == .ready ? "Ready" : "—").braunLabel(size: 11)
         }
         .padding(.horizontal, 24)
@@ -122,10 +155,14 @@ struct RootView: View {
             Text("Tap to record").braunLabel()
         case .recording:
             VStack(spacing: 10) {
+                if session.recorder.isPaused {
+                    Text("Paused").braunLabel(size: 11).foregroundStyle(BraunPalette.recording)
+                }
                 Text(String(format: "%.1f s", session.recorder.elapsed))
                     .braunDigit(size: 22)
                 BraunLevelMeter(peakDB: session.recorder.peakLevel)
                     .frame(width: 220, height: 6)
+                    .opacity(session.recorder.isPaused ? 0.4 : 1)
             }
         case .transcribing:
             HStack(spacing: 10) {
@@ -145,14 +182,10 @@ struct RootView: View {
     }
 
     private func lastRecordingChip(_ rec: Recording) -> some View {
-        let preview: String = {
-            guard let s = rec.summary, !s.isEmpty else { return "Untitled recording" }
-            return s.count > 100 ? String(s.prefix(100)) + "…" : s
-        }()
         return HStack {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Latest recording").braunLabel(size: 9)
-                Text(preview)
+                Text(rec.title ?? rec.summary ?? "Untitled recording")
                     .braunBody()
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
@@ -217,6 +250,38 @@ struct RootView: View {
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
+    }
+
+    // MARK: - Import
+
+    private func handleImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            Task { await importExternalAudio(from: url) }
+        case .failure(let error):
+            importError = error.localizedDescription
+        }
+    }
+
+    private func importExternalAudio(from sourceURL: URL) async {
+        guard session.modelState == .ready else {
+            importError = "Models are still loading. Try again in a moment."
+            return
+        }
+        let needsScope = sourceURL.startAccessingSecurityScopedResource()
+        defer { if needsScope { sourceURL.stopAccessingSecurityScopedResource() } }
+
+        let dir = library.directory
+        let name = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let destination = dir.appendingPathComponent("\(name)-\(sourceURL.lastPathComponent)")
+        do {
+            try FileManager.default.copyItem(at: sourceURL, to: destination)
+        } catch {
+            importError = "Could not copy file: \(error.localizedDescription)"
+            return
+        }
+        await session.processImported(audioURL: destination, createdAt: Date())
     }
 }
 

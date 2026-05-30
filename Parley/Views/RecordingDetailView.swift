@@ -93,9 +93,14 @@ struct RecordingDetailView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if let title = current.title, !title.isEmpty {
+                Text(title)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(BraunPalette.foreground)
+            }
             Text(Self.fullDate.string(from: current.createdAt))
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(BraunPalette.foreground)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(BraunPalette.secondary)
             HStack(spacing: 14) {
                 Text(durationText(current.duration)).braunLabel()
                 let speakers = current.distinctSpeakerLabels.count
@@ -109,52 +114,45 @@ struct RecordingDetailView: View {
     // MARK: - Player
 
     private var playerBar: some View {
-        HStack(spacing: 14) {
-            Button {
-                if player.isPlaying { player.pause() } else { player.play() }
-            } label: {
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(BraunPalette.foreground)
-                    .frame(width: 44, height: 44)
-                    .background(Rectangle().stroke(BraunPalette.foreground, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-
-            VStack(alignment: .leading, spacing: 4) {
-                progressBar
-                HStack {
-                    Text(mmss(player.currentTime)).braunDigit(size: 11)
-                    Spacer()
-                    Text(mmss(player.duration > 0 ? player.duration : current.duration))
-                        .braunDigit(size: 11)
-                        .foregroundStyle(BraunPalette.secondary)
+        VStack(spacing: 12) {
+            WaveformView(
+                url: current.audioURL(in: library.directory),
+                progress: playbackFraction,
+                onSeek: { fraction in
+                    let total = max(player.duration, current.duration)
+                    player.seek(to: fraction * total)
                 }
+            )
+            .frame(height: 56)
+
+            HStack(spacing: 14) {
+                Button {
+                    if player.isPlaying { player.pause() } else { player.play() }
+                } label: {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(BraunPalette.foreground)
+                        .frame(width: 44, height: 44)
+                        .background(Rectangle().stroke(BraunPalette.foreground, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Text(mmss(player.currentTime)).braunDigit(size: 12)
+                Text("/").braunDigit(size: 12).foregroundStyle(BraunPalette.secondary)
+                Text(mmss(player.duration > 0 ? player.duration : current.duration))
+                    .braunDigit(size: 12)
+                    .foregroundStyle(BraunPalette.secondary)
             }
         }
         .padding(16)
         .background(BraunPalette.surface)
     }
 
-    private var progressBar: some View {
-        GeometryReader { geo in
-            let total = max(player.duration, 0.01)
-            let fraction = min(1, max(0, player.currentTime / total))
-            ZStack(alignment: .leading) {
-                Rectangle().fill(BraunPalette.divider).frame(height: 2)
-                Rectangle()
-                    .fill(BraunPalette.foreground)
-                    .frame(width: geo.size.width * fraction, height: 2)
-            }
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0)
-                .onEnded { v in
-                    let pct = max(0, min(1, v.location.x / geo.size.width))
-                    player.seek(to: pct * total)
-                }
-            )
-        }
-        .frame(height: 16)
+    private var playbackFraction: Double {
+        let total = max(player.duration, 0.01)
+        return min(1, max(0, player.currentTime / total))
     }
 
     // MARK: - Transcript

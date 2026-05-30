@@ -5,6 +5,7 @@ import FoundationModels
 
 protocol SummarizationService {
     func summarize(_ text: String) async throws -> String
+    func title(for text: String) async throws -> String
 }
 
 enum SummarizationFactory {
@@ -36,15 +37,7 @@ struct AppleSummarizationService: SummarizationService {
     }
 
     func summarize(_ text: String) async throws -> String {
-        switch SystemLanguageModel.default.availability {
-        case .available:
-            break
-        case .unavailable(let reason):
-            throw ServiceError.modelUnavailable("Apple on-device LLM unavailable: \(reason)")
-        }
-
-        // The on-device model is small and tends to paraphrase/echo the transcript when
-        // asked vaguely. Instructions are deliberately blunt and prohibitive.
+        try ensureAvailable()
         let instructions = """
         You are a summarization assistant. You receive a transcript with lines like \
         "Speaker 1: ...". You output ONLY a short summary in 2 to 3 sentences, under 60 words.
@@ -60,6 +53,40 @@ struct AppleSummarizationService: SummarizationService {
         let session = LanguageModelSession(instructions: instructions)
         let response = try await session.respond(to: "Transcript:\n\(text)\n\nSummary:")
         return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func title(for text: String) async throws -> String {
+        try ensureAvailable()
+        let instructions = """
+        You are a title generator. Output ONLY a short newspaper-headline title for the transcript.
+
+        Hard rules:
+        - 3 to 5 words.
+        - No quotation marks, no markdown, no leading "Title:" prefix.
+        - Capture the topic only (e.g. "Q3 sales planning", "Voice memo about groceries").
+        - Output the title and nothing else.
+        """
+        let session = LanguageModelSession(instructions: instructions)
+        let response = try await session.respond(to: "Transcript:\n\(text)\n\nTitle:")
+        return Self.cleanTitle(response.content)
+    }
+
+    private func ensureAvailable() throws {
+        switch SystemLanguageModel.default.availability {
+        case .available: break
+        case .unavailable(let reason):
+            throw ServiceError.modelUnavailable("Apple on-device LLM unavailable: \(reason)")
+        }
+    }
+
+    private static func cleanTitle(_ raw: String) -> String {
+        var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Strip surrounding quotes the model sometimes still adds.
+        if let first = t.first, ["\"", "'", "“", "‘"].contains(first) { t.removeFirst() }
+        if let last = t.last, ["\"", "'", "”", "’"].contains(last) { t.removeLast() }
+        // Drop trailing period — titles don't take one.
+        if t.last == "." { t.removeLast() }
+        return t
     }
 }
 #endif
@@ -77,5 +104,12 @@ struct MockSummarizationService: SummarizationService {
         return lead.isEmpty
             ? "[mock summary — Apple Intelligence not available on this device]"
             : "[mock summary] " + lead + "."
+    }
+
+    func title(for text: String) async throws -> String {
+        let words = text.split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .prefix(5)
+            .joined(separator: " ")
+        return words.isEmpty ? "Untitled recording" : "Note: \(words)"
     }
 }

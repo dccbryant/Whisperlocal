@@ -8,6 +8,15 @@ enum AudioFileReader {
         case readFailed(Error)
     }
 
+    /// Returns the duration in seconds of any AVFoundation-readable audio file, or nil if
+    /// the file can't be opened.
+    static func duration(of url: URL) -> TimeInterval? {
+        guard let file = try? AVAudioFile(forReading: url) else { return nil }
+        let sampleRate = file.processingFormat.sampleRate
+        guard sampleRate > 0 else { return nil }
+        return Double(file.length) / sampleRate
+    }
+
     /// Read any AVFoundation-readable audio file and return 16 kHz mono Float32 samples
     /// normalized to [-1, 1] — the exact shape WhisperKit's `transcribe(audioArray:)` wants.
     static func readMono16kFloats(at url: URL) throws -> [Float] {

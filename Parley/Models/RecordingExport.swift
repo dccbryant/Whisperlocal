@@ -23,6 +23,9 @@ enum RecordingExport {
     }
 
     static func subject(for recording: Recording) -> String {
+        if let title = recording.title, !title.isEmpty {
+            return "Parley · \(title)"
+        }
         let date = DateFormatter.localizedString(from: recording.createdAt, dateStyle: .medium, timeStyle: .short)
         return "Parley recording — \(date)"
     }
@@ -35,7 +38,12 @@ enum RecordingExport {
     static func body(for recording: Recording) -> String {
         var lines: [String] = []
 
-        lines.append("PARLEY · \(dateFormatter.string(from: recording.createdAt)) · \(formatDuration(recording.duration))")
+        if let title = recording.title, !title.isEmpty {
+            lines.append("PARLEY · \(title.uppercased())")
+            lines.append("\(dateFormatter.string(from: recording.createdAt)) · \(formatDuration(recording.duration))")
+        } else {
+            lines.append("PARLEY · \(dateFormatter.string(from: recording.createdAt)) · \(formatDuration(recording.duration))")
+        }
         lines.append("")
 
         if let summary = recording.summary, !summary.isEmpty {

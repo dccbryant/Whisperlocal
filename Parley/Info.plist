@@ -36,6 +36,24 @@
     </array>
     <key>NSMicrophoneUsageDescription</key>
     <string>Parley records audio so it can transcribe and summarize it entirely on your device. Audio never leaves your phone.</string>
+    <key>NSFaceIDUsageDescription</key>
+    <string>Parley uses Face ID to keep your recordings private. Audio and transcripts never leave your device.</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Audio</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.audio</string>
+                <string>public.mp3</string>
+                <string>com.microsoft.waveform-audio</string>
+                <string>public.mpeg-4-audio</string>
+            </array>
+        </dict>
+    </array>
     <key>UIBackgroundModes</key>
     <array>
         <string>audio</string>

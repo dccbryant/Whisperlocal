@@ -74,7 +74,6 @@ final class SessionStore: ObservableObject {
     }
 
     func stopAndProcess() async {
-        // Capture the elapsed time before stop() resets it.
         let duration = recorder.elapsed
         guard let url = recorder.stop() else {
             activity.end()
@@ -84,11 +83,21 @@ final class SessionStore: ObservableObject {
         }
         activity.end()
         recordingStartedAt = nil
+        await process(audioURL: url, duration: duration, createdAt: Date())
+    }
 
+    /// Process an audio file the user imported from Files / share sheet. The audio file is
+    /// expected to already live inside the library's Recordings directory.
+    func processImported(audioURL: URL, createdAt: Date) async {
+        let duration = AudioFileReader.duration(of: audioURL) ?? 0
+        await process(audioURL: audioURL, duration: duration, createdAt: createdAt)
+    }
+
+    private func process(audioURL url: URL, duration: TimeInterval, createdAt: Date) async {
         var rec = Recording(
             id: UUID(),
             audioFilename: url.lastPathComponent,
-            createdAt: Date(),
+            createdAt: createdAt,
             duration: duration
         )
 
@@ -98,8 +107,8 @@ final class SessionStore: ObservableObject {
             rec.segments = segments
 
             stage = .summarizing
-            let summary = try await summarizer.summarize(rec.flatTranscript)
-            rec.summary = summary
+            rec.summary = try await summarizer.summarize(rec.flatTranscript)
+            rec.title = (try? await summarizer.title(for: rec.flatTranscript))
 
             library.save(rec)
             lastCompleted = rec

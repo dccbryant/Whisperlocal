@@ -13,11 +13,13 @@ struct ParleyApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environmentObject(session)
-                .environmentObject(library)
-                .preferredColorScheme(.light)
-                .tint(BraunPalette.accent)
+            LockGate {
+                RootView()
+                    .environmentObject(session)
+                    .environmentObject(library)
+            }
+            .preferredColorScheme(.light)
+            .tint(BraunPalette.accent)
         }
     }
 }

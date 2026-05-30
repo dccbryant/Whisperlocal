@@ -4,7 +4,14 @@ struct LibraryView: View {
     @EnvironmentObject private var library: RecordingStore
     @State private var query: String = ""
 
-    private static let shortDate: DateFormatter = {
+    private static let timeOnly: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .none
+        f.timeStyle = .short
+        return f
+    }()
+
+    private static let dateAndTime: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .medium
         f.timeStyle = .short
@@ -15,6 +22,39 @@ struct LibraryView: View {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return library.recordings }
         return library.recordings.filter { $0.searchableText.contains(q) }
+    }
+
+    /// Groups recordings into Today / Yesterday / This Week / This Month / Older sections,
+    /// preserving the newest-first order within each.
+    private var sections: [(title: String, items: [Recording])] {
+        let cal = Calendar.current
+        let now = Date()
+        var today: [Recording] = []
+        var yesterday: [Recording] = []
+        var thisWeek: [Recording] = []
+        var thisMonth: [Recording] = []
+        var older: [Recording] = []
+
+        for rec in filtered {
+            if cal.isDateInToday(rec.createdAt) {
+                today.append(rec)
+            } else if cal.isDateInYesterday(rec.createdAt) {
+                yesterday.append(rec)
+            } else if cal.isDate(rec.createdAt, equalTo: now, toGranularity: .weekOfYear) {
+                thisWeek.append(rec)
+            } else if cal.isDate(rec.createdAt, equalTo: now, toGranularity: .month) {
+                thisMonth.append(rec)
+            } else {
+                older.append(rec)
+            }
+        }
+        var out: [(String, [Recording])] = []
+        if !today.isEmpty     { out.append(("Today", today)) }
+        if !yesterday.isEmpty { out.append(("Yesterday", yesterday)) }
+        if !thisWeek.isEmpty  { out.append(("This week", thisWeek)) }
+        if !thisMonth.isEmpty { out.append(("This month", thisMonth)) }
+        if !older.isEmpty     { out.append(("Older", older)) }
+        return out
     }
 
     var body: some View {
@@ -40,18 +80,26 @@ struct LibraryView: View {
 
     private var list: some View {
         List {
-            ForEach(filtered) { rec in
-                NavigationLink(value: rec) { row(for: rec) }
-                    .listRowBackground(BraunPalette.background)
-                    .listRowSeparatorTint(BraunPalette.divider)
-                    .listRowInsets(EdgeInsets(top: 14, leading: 24, bottom: 14, trailing: 16))
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button(role: .destructive) {
-                            library.delete(rec)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
+            ForEach(sections, id: \.title) { section in
+                Section {
+                    ForEach(section.items) { rec in
+                        NavigationLink(value: rec) { row(for: rec) }
+                            .listRowBackground(BraunPalette.background)
+                            .listRowSeparatorTint(BraunPalette.divider)
+                            .listRowInsets(EdgeInsets(top: 14, leading: 24, bottom: 14, trailing: 16))
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    library.delete(rec)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                     }
+                } header: {
+                    Text(section.title)
+                        .braunLabel(size: 10)
+                        .padding(.vertical, 4)
+                }
             }
         }
         .listStyle(.plain)
@@ -60,12 +108,19 @@ struct LibraryView: View {
 
     private func row(for rec: Recording) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(Self.shortDate.string(from: rec.createdAt))
-                .braunDigit(size: 13)
-            Text(rec.summary?.isEmpty == false ? rec.summary! : "—")
-                .braunBody()
-                .lineLimit(3)
-                .multilineTextAlignment(.leading)
+            HStack(alignment: .firstTextBaseline) {
+                Text(rec.title ?? "Untitled recording")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(BraunPalette.foreground)
+                Spacer()
+                Text(timeStamp(for: rec)).braunDigit(size: 11).foregroundStyle(BraunPalette.secondary)
+            }
+            if let summary = rec.summary, !summary.isEmpty {
+                Text(summary)
+                    .braunBody()
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
             HStack(spacing: 14) {
                 Text(durationText(rec.duration)).braunLabel(size: 9)
                 let speakers = rec.distinctSpeakerLabels.count
@@ -75,6 +130,14 @@ struct LibraryView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func timeStamp(for rec: Recording) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(rec.createdAt) || cal.isDateInYesterday(rec.createdAt) {
+            return Self.timeOnly.string(from: rec.createdAt)
+        }
+        return Self.dateAndTime.string(from: rec.createdAt)
     }
 
     private func durationText(_ s: TimeInterval) -> String {
