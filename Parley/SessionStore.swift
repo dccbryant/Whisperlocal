@@ -29,6 +29,8 @@ final class SessionStore: ObservableObject {
     let summarizer: SummarizationService
 
     private let transcriber = DiarizingTranscriptionService()
+    private let activity = RecordingActivityManager()
+    private var recordingStartedAt: Date?
     private var cancellables = Set<AnyCancellable>()
 
     init(library: RecordingStore, summarizer: SummarizationService = SummarizationFactory.make()) {
@@ -36,7 +38,13 @@ final class SessionStore: ObservableObject {
         self.summarizer = summarizer
 
         recorder.objectWillChange
-            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.objectWillChange.send()
+                if let started = self.recordingStartedAt, self.recorder.isRecording {
+                    self.activity.update(startedAt: started, peakLevel: self.recorder.peakLevel)
+                }
+            }
             .store(in: &cancellables)
 
         Task { await loadModel() }
@@ -55,6 +63,9 @@ final class SessionStore: ObservableObject {
     func startRecording() async {
         do {
             _ = try await recorder.start()
+            let started = Date()
+            recordingStartedAt = started
+            activity.start(at: started)
             lastCompleted = nil
             stage = .recording
         } catch {
@@ -66,9 +77,14 @@ final class SessionStore: ObservableObject {
         // Capture the elapsed time before stop() resets it.
         let duration = recorder.elapsed
         guard let url = recorder.stop() else {
+            activity.end()
+            recordingStartedAt = nil
             stage = .idle
             return
         }
+        activity.end()
+        recordingStartedAt = nil
+
         var rec = Recording(
             id: UUID(),
             audioFilename: url.lastPathComponent,

@@ -23,9 +23,11 @@ targets:
     platform: iOS
     sources:
       - path: Parley
+      - path: Shared
     resources:
       - path: Parley/Resources
     dependencies:
+      - target: ParleyLiveActivity
       - package: WhisperKit
         product: WhisperKit
       - package: WhisperKit
@@ -36,7 +38,8 @@ targets:
         CFBundleDisplayName: Parley
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
-        UILaunchScreen: {}
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations:
@@ -45,6 +48,7 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         UIBackgroundModes:
           - audio
+        NSSupportsLiveActivities: true
     entitlements:
       path: Parley/Parley.entitlements
       properties: {}
@@ -54,3 +58,24 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_ENTITLEMENTS: Parley/Parley.entitlements
+
+  ParleyLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ParleyLiveActivity
+      - path: Shared
+    info:
+      path: ParleyLiveActivity/Info.plist
+      properties:
+        CFBundleDisplayName: Parley Live Activity
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.davidbryant.parley.LiveActivity
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
