@@ -10,6 +10,13 @@ final class LockState: ObservableObject {
     /// when biometrics are available on the device, false otherwise.
     private static let preferenceKey = "ParleyBiometricLockEnabled"
 
+    /// How long the app may sit in the background before we challenge again. Anything shorter
+    /// (a share sheet round-trip, a quick app switch) returns to an unlocked state without a
+    /// Face ID prompt — matching what 1Password / banking apps do.
+    private let gracePeriod: TimeInterval = 30
+
+    private var leftForegroundAt: Date?
+
     init() {
         let context = LAContext()
         var error: NSError?
@@ -40,6 +47,11 @@ final class LockState: ObservableObject {
                 isLocked = false
                 lastError = nil
             }
+        } catch let err as LAError where err.code == .userCancel || err.code == .systemCancel || err.code == .appCancel {
+            // User dismissed the prompt themselves or iOS cancelled it (e.g. competing
+            // auth context, share sheet still settling). Stay locked but don't show an
+            // error — the Unlock button stays available for manual retry.
+            lastError = nil
         } catch let err as LAError {
             lastError = err.localizedDescription
         } catch {
@@ -47,14 +59,27 @@ final class LockState: ObservableObject {
         }
     }
 
-    /// Called when the app comes back to foreground — re-lock so the next view requires
-    /// re-authentication.
-    func relock() {
+    /// React to scene phase changes. Re-locks only if the app was away from the foreground
+    /// longer than `gracePeriod`, so quick share-and-returns don't challenge.
+    func handleScenePhase(_ phase: ScenePhase) {
         let defaults = UserDefaults.standard
         guard defaults.bool(forKey: Self.preferenceKey) else { return }
-        let context = LAContext()
-        if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) {
-            isLocked = true
+        switch phase {
+        case .background, .inactive:
+            if leftForegroundAt == nil {
+                leftForegroundAt = Date()
+            }
+        case .active:
+            defer { leftForegroundAt = nil }
+            guard let left = leftForegroundAt else { return }
+            if Date().timeIntervalSince(left) > gracePeriod {
+                let context = LAContext()
+                if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) {
+                    isLocked = true
+                }
+            }
+        @unknown default:
+            break
         }
     }
 }
@@ -78,9 +103,7 @@ struct LockGate<Content: View>: View {
             if state.isLocked { await state.authenticate() }
         }
         .onChange(of: phase) { _, newPhase in
-            if newPhase == .background || newPhase == .inactive {
-                state.relock()
-            }
+            state.handleScenePhase(newPhase)
         }
     }
 
