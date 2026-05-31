@@ -67,6 +67,20 @@ struct AppleSummarizationService: SummarizationService {
 
     func summarize(_ text: String) async throws -> String {
         try ensureAvailable()
+        let chunks = Self.chunk(text)
+        if chunks.count == 1 {
+            return try await summarizeChunk(chunks[0])
+        }
+        // Map-reduce: summarize each chunk, then summarize the summaries.
+        var partials: [String] = []
+        for chunk in chunks {
+            let s = try await summarizeChunk(chunk)
+            partials.append(s)
+        }
+        return try await summarizeChunk(partials.joined(separator: "\n\n"))
+    }
+
+    private func summarizeChunk(_ text: String) async throws -> String {
         let instructions = """
         You are a summarization assistant. You receive a transcript with lines like \
         "Speaker 1: ...". You output ONLY a short summary in 2 to 3 sentences, under 60 words.
@@ -86,6 +100,9 @@ struct AppleSummarizationService: SummarizationService {
 
     func title(for text: String) async throws -> String {
         try ensureAvailable()
+        // Title only needs the topic, not the full transcript. Cap at the first 4K chars
+        // so we never hit the context window on a long meeting.
+        let snippet = String(text.prefix(4_000))
         let instructions = """
         You are a title generator. Output ONLY a short newspaper-headline title for the transcript.
 
@@ -96,12 +113,30 @@ struct AppleSummarizationService: SummarizationService {
         - Output the title and nothing else.
         """
         let session = LanguageModelSession(instructions: instructions)
-        let response = try await session.respond(to: "Transcript:\n\(text)\n\nTitle:")
+        let response = try await session.respond(to: "Transcript:\n\(snippet)\n\nTitle:")
         return Self.cleanTitle(response.content)
     }
 
     func extract(from text: String) async throws -> MeetingExtraction {
         try ensureAvailable()
+        let chunks = Self.chunk(text)
+        if chunks.count == 1 {
+            return try await extractFromChunk(chunks[0])
+        }
+        // Run each chunk through extraction, then merge: union of decisions, union of
+        // action items. Duplicates (same task across chunks) are tolerated rather than
+        // de-duped — the model is conservative and false negatives are worse than dupes.
+        var decisions: [String] = []
+        var actions: [ActionItem] = []
+        for chunk in chunks {
+            let e = try await extractFromChunk(chunk)
+            decisions.append(contentsOf: e.decisions)
+            actions.append(contentsOf: e.actionItems)
+        }
+        return MeetingExtraction(decisions: decisions, actionItems: actions)
+    }
+
+    private func extractFromChunk(_ text: String) async throws -> MeetingExtraction {
         let instructions = """
         You extract structured meeting notes from a transcript. Be conservative.
 
@@ -127,7 +162,35 @@ struct AppleSummarizationService: SummarizationService {
                 dueDate: trimmedDue.isEmpty ? nil : trimmedDue
             )
         }
-        return MeetingExtraction(decisions: g.decisions.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }, actionItems: items)
+        return MeetingExtraction(
+            decisions: g.decisions.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) },
+            actionItems: items
+        )
+    }
+
+    /// Split a transcript into chunks small enough to fit the on-device LLM context window
+    /// alongside our instructions and the expected response. Apple's on-device model carries
+    /// roughly a 4K-token context (≈ 12K English characters); 8K leaves comfortable headroom
+    /// for the system instructions and the generated output.
+    private static func chunk(_ text: String, maxChars: Int = 8_000) -> [String] {
+        if text.count <= maxChars { return [text] }
+        // Prefer breaking on newlines so we don't split a speaker turn mid-sentence.
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var chunks: [String] = []
+        var current: [String] = []
+        var size = 0
+        for line in lines {
+            let lineSize = line.count + 1
+            if size + lineSize > maxChars, !current.isEmpty {
+                chunks.append(current.joined(separator: "\n"))
+                current = []
+                size = 0
+            }
+            current.append(line)
+            size += lineSize
+        }
+        if !current.isEmpty { chunks.append(current.joined(separator: "\n")) }
+        return chunks
     }
 
     private func ensureAvailable() throws {
