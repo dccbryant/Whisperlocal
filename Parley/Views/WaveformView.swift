@@ -51,7 +51,7 @@ final class WaveformModel: ObservableObject {
             guard reader.startReading() else { return [] }
 
             let sampleRate: Double = {
-                guard let cmFormat = formatDescriptions.first as? CMAudioFormatDescription,
+                guard let cmFormat = formatDescriptions.first,
                       let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(cmFormat) else {
                     return 44_100
                 }
