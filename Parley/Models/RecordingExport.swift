@@ -52,6 +52,26 @@ enum RecordingExport {
             lines.append("")
         }
 
+        if !recording.decisions.isEmpty {
+            lines.append("────── DECISIONS ──────")
+            for d in recording.decisions {
+                lines.append("• \(d)")
+            }
+            lines.append("")
+        }
+
+        if !recording.actionItems.isEmpty {
+            lines.append("────── ACTION ITEMS ──────")
+            for item in recording.actionItems {
+                var line = "• \(item.assignee): \(item.task)"
+                if let due = item.dueDate, !due.isEmpty {
+                    line += " (by \(due))"
+                }
+                lines.append(line)
+            }
+            lines.append("")
+        }
+
         if !recording.segments.isEmpty {
             lines.append("────── TRANSCRIPT ──────")
             for seg in recording.segments {

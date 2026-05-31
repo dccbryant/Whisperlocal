@@ -3,9 +3,16 @@ import Foundation
 import FoundationModels
 #endif
 
+struct MeetingExtraction: Hashable {
+    let decisions: [String]
+    let actionItems: [ActionItem]
+    static let empty = MeetingExtraction(decisions: [], actionItems: [])
+}
+
 protocol SummarizationService {
     func summarize(_ text: String) async throws -> String
     func title(for text: String) async throws -> String
+    func extract(from text: String) async throws -> MeetingExtraction
 }
 
 enum SummarizationFactory {
@@ -29,6 +36,27 @@ struct AppleSummarizationService: SummarizationService {
             if case let .modelUnavailable(reason) = self { return reason }
             return nil
         }
+    }
+
+    /// Mirror types used only for structured-output generation. Kept private so the
+    /// rest of the app keeps clean plain-Codable model types and isn't tied to the
+    /// FoundationModels framework.
+    @Generable
+    private struct GenerableExtraction {
+        @Guide(description: "Concrete decisions reached in the meeting. Each is one short sentence. Empty if nothing was decided.")
+        let decisions: [String]
+        @Guide(description: "Concrete next-step tasks that someone needs to do.")
+        let actionItems: [GenerableActionItem]
+    }
+
+    @Generable
+    private struct GenerableActionItem {
+        @Guide(description: "Name of the person who will do this. Use 'Unassigned' if the transcript does not make it clear.")
+        let assignee: String
+        @Guide(description: "What needs to be done, one short sentence in the imperative.")
+        let task: String
+        @Guide(description: "When it is due — for example 'Friday', 'next Tuesday', 'end of quarter'. Use an empty string if no time was mentioned.")
+        let dueDate: String
     }
 
     static var isAvailable: Bool {
@@ -71,6 +99,36 @@ struct AppleSummarizationService: SummarizationService {
         return Self.cleanTitle(response.content)
     }
 
+    func extract(from text: String) async throws -> MeetingExtraction {
+        try ensureAvailable()
+        let instructions = """
+        You extract structured meeting notes from a transcript. Be conservative.
+
+        Rules:
+        - "Decisions" are conclusions reached, not tasks. Examples: "Go with vendor A.", \
+        "Move standup to Tuesdays.". Each is one sentence.
+        - "Action items" are concrete next steps someone agreed to do. Attribute the assignee \
+        only when the transcript makes it clear ("Sarah, can you...?"). Otherwise use "Unassigned".
+        - Only include a due date when the speaker actually stated one. Leave it empty otherwise.
+        - If nothing was decided, return an empty decisions array.
+        - If no action items were assigned, return an empty actionItems array.
+        - Do NOT invent decisions or actions that were not in the transcript.
+        """
+        let session = LanguageModelSession(instructions: instructions)
+        let response = try await session.respond(generating: GenerableExtraction.self,
+                                                 to: "Transcript:\n\(text)")
+        let g = response.content
+        let items = g.actionItems.map { gi -> ActionItem in
+            let trimmedDue = gi.dueDate.trimmingCharacters(in: .whitespacesAndNewlines)
+            return ActionItem(
+                assignee: gi.assignee.trimmingCharacters(in: .whitespacesAndNewlines),
+                task: gi.task.trimmingCharacters(in: .whitespacesAndNewlines),
+                dueDate: trimmedDue.isEmpty ? nil : trimmedDue
+            )
+        }
+        return MeetingExtraction(decisions: g.decisions.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }, actionItems: items)
+    }
+
     private func ensureAvailable() throws {
         switch SystemLanguageModel.default.availability {
         case .available: break
@@ -81,10 +139,8 @@ struct AppleSummarizationService: SummarizationService {
 
     private static func cleanTitle(_ raw: String) -> String {
         var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Strip surrounding quotes the model sometimes still adds.
         if let first = t.first, ["\"", "'", "“", "‘"].contains(first) { t.removeFirst() }
         if let last = t.last, ["\"", "'", "”", "’"].contains(last) { t.removeLast() }
-        // Drop trailing period — titles don't take one.
         if t.last == "." { t.removeLast() }
         return t
     }
@@ -92,7 +148,7 @@ struct AppleSummarizationService: SummarizationService {
 #endif
 
 /// Placeholder used on devices without Apple Intelligence. Echoes the first couple of sentences
-/// so the UI has something to render.
+/// so the UI has something to render. Returns empty meeting extraction.
 struct MockSummarizationService: SummarizationService {
     func summarize(_ text: String) async throws -> String {
         try await Task.sleep(nanoseconds: 200_000_000)
@@ -111,5 +167,9 @@ struct MockSummarizationService: SummarizationService {
             .prefix(5)
             .joined(separator: " ")
         return words.isEmpty ? "Untitled recording" : "Note: \(words)"
+    }
+
+    func extract(from text: String) async throws -> MeetingExtraction {
+        .empty
     }
 }

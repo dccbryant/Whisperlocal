@@ -37,6 +37,16 @@ struct RecordingDetailView: View {
                             Text(summary).braunBody().textSelection(.enabled)
                         }
                     }
+                    if !current.decisions.isEmpty {
+                        BraunCard(title: "Decisions") {
+                            decisionsBody
+                        }
+                    }
+                    if !current.actionItems.isEmpty {
+                        BraunCard(title: "Action items") {
+                            actionItemsBody
+                        }
+                    }
                     if !current.segments.isEmpty {
                         BraunCard(title: "Transcript") {
                             transcriptBody
@@ -166,6 +176,35 @@ struct RecordingDetailView: View {
     private var playbackFraction: Double {
         let total = max(player.duration, 0.01)
         return min(1, max(0, player.currentTime / total))
+    }
+
+    // MARK: - Decisions / Action items
+
+    private var decisionsBody: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(current.decisions, id: \.self) { d in
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("·").braunBody()
+                    Text(d).braunBody().textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private var actionItemsBody: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(current.actionItems) { item in
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(item.assignee).braunLabel(size: 10).foregroundStyle(BraunPalette.accent)
+                        if let due = item.dueDate, !due.isEmpty {
+                            Text("· \(due)").braunLabel(size: 10).foregroundStyle(BraunPalette.secondary)
+                        }
+                    }
+                    Text(item.task).braunBody().textSelection(.enabled)
+                }
+            }
+        }
     }
 
     // MARK: - Transcript

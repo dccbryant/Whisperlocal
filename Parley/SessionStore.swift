@@ -100,14 +100,14 @@ final class SessionStore: ObservableObject {
         stage = .transcribing
         do {
             let segments = try await transcriber.transcribe(audioAt: url)
+            let transcriptText = segments
+                .map { "\($0.speakerLabel): \($0.text)" }
+                .joined(separator: "\n")
 
             stage = .summarizing
-            let summary = try await summarizer.summarize(
-                segments.map { "\($0.speakerLabel): \($0.text)" }.joined(separator: "\n")
-            )
-            let title = try? await summarizer.title(
-                for: segments.map { "\($0.speakerLabel): \($0.text)" }.joined(separator: "\n")
-            )
+            let summary = try await summarizer.summarize(transcriptText)
+            let title = try? await summarizer.title(for: transcriptText)
+            let extraction = (try? await summarizer.extract(from: transcriptText)) ?? .empty
 
             let filename = try library.ingestAudio(from: url)
             var rec = Recording(
@@ -119,13 +119,13 @@ final class SessionStore: ObservableObject {
             rec.segments = segments
             rec.summary = summary
             rec.title = title
+            rec.decisions = extraction.decisions
+            rec.actionItems = extraction.actionItems
 
             library.save(rec)
             lastCompleted = rec
             stage = .done
         } catch {
-            // Leave the plaintext temp file alone on failure so the user could retry — but
-            // the simpler default is to clean it up.
             try? FileManager.default.removeItem(at: url)
             stage = .failed("Processing failed: \(error.localizedDescription)")
         }
