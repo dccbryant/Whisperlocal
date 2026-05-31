@@ -38,11 +38,12 @@ struct AppleSummarizationService: SummarizationService {
         }
     }
 
-    /// Mirror types used only for structured-output generation. Kept private so the
-    /// rest of the app keeps clean plain-Codable model types and isn't tied to the
-    /// FoundationModels framework.
+    /// Mirror types used only for structured-output generation. The @Generable macro's
+    /// expansion needs to reference these from outside the struct, so they can't be
+    /// `private`; left at internal/file scope so the rest of the app stays decoupled
+    /// from the FoundationModels framework via the public MeetingExtraction value type.
     @Generable
-    private struct GenerableExtraction {
+    struct GenerableExtraction {
         @Guide(description: "Concrete decisions reached in the meeting. Each is one short sentence. Empty if nothing was decided.")
         let decisions: [String]
         @Guide(description: "Concrete next-step tasks that someone needs to do.")
@@ -50,7 +51,7 @@ struct AppleSummarizationService: SummarizationService {
     }
 
     @Generable
-    private struct GenerableActionItem {
+    struct GenerableActionItem {
         @Guide(description: "Name of the person who will do this. Use 'Unassigned' if the transcript does not make it clear.")
         let assignee: String
         @Guide(description: "What needs to be done, one short sentence in the imperative.")
@@ -115,8 +116,8 @@ struct AppleSummarizationService: SummarizationService {
         - Do NOT invent decisions or actions that were not in the transcript.
         """
         let session = LanguageModelSession(instructions: instructions)
-        let response = try await session.respond(generating: GenerableExtraction.self,
-                                                 to: "Transcript:\n\(text)")
+        let response = try await session.respond(to: "Transcript:\n\(text)",
+                                                 generating: GenerableExtraction.self)
         let g = response.content
         let items = g.actionItems.map { gi -> ActionItem in
             let trimmedDue = gi.dueDate.trimmingCharacters(in: .whitespacesAndNewlines)
