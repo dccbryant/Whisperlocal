@@ -21,6 +21,8 @@ final class SessionStore: ObservableObject {
 
     @Published var stage: Stage = .idle
     @Published var modelState: ModelState = .loading
+    /// 0…1 progress within the current stage (.transcribing or .summarizing). nil between stages.
+    @Published var stageProgress: Double?
     /// The recording produced by the most recent record→process cycle. Cleared on next record.
     @Published var lastCompleted: Recording?
 
@@ -98,16 +100,28 @@ final class SessionStore: ObservableObject {
     /// on the plaintext so we don't pay decrypt cost for the analysis path.
     private func process(plaintextAudioURL url: URL, duration: TimeInterval, createdAt: Date) async {
         stage = .transcribing
+        stageProgress = 0
         do {
-            let segments = try await transcriber.transcribe(audioAt: url)
+            let segments = try await transcriber.transcribe(audioAt: url) { [weak self] p in
+                Task { @MainActor [weak self] in self?.stageProgress = p }
+            }
             let transcriptText = segments
                 .map { "\($0.speakerLabel): \($0.text)" }
                 .joined(separator: "\n")
 
             stage = .summarizing
-            let summary = try await summarizer.summarize(transcriptText)
+            stageProgress = 0
+            // Budget within .summarizing: summarize 0…0.5, title 0.5…0.55, extract 0.55…1.0.
+            let summary = try await summarizer.summarize(transcriptText) { [weak self] p in
+                Task { @MainActor [weak self] in self?.stageProgress = p * 0.5 }
+            }
+            stageProgress = 0.5
             let title = try? await summarizer.title(for: transcriptText)
-            let extraction = (try? await summarizer.extract(from: transcriptText)) ?? .empty
+            stageProgress = 0.55
+            let extraction = (try? await summarizer.extract(from: transcriptText) { [weak self] p in
+                Task { @MainActor [weak self] in self?.stageProgress = 0.55 + p * 0.45 }
+            }) ?? .empty
+            stageProgress = 1.0
 
             let filename = try library.ingestAudio(from: url)
             var rec = Recording(
@@ -124,9 +138,11 @@ final class SessionStore: ObservableObject {
 
             library.save(rec)
             lastCompleted = rec
+            stageProgress = nil
             stage = .done
         } catch {
             try? FileManager.default.removeItem(at: url)
+            stageProgress = nil
             stage = .failed("Processing failed: \(error.localizedDescription)")
         }
     }

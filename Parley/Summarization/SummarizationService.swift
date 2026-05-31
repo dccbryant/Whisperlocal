@@ -10,9 +10,17 @@ struct MeetingExtraction: Hashable {
 }
 
 protocol SummarizationService {
-    func summarize(_ text: String) async throws -> String
+    func summarize(
+        _ text: String,
+        onProgress: (@Sendable (Double) -> Void)?
+    ) async throws -> String
+
     func title(for text: String) async throws -> String
-    func extract(from text: String) async throws -> MeetingExtraction
+
+    func extract(
+        from text: String,
+        onProgress: (@Sendable (Double) -> Void)?
+    ) async throws -> MeetingExtraction
 }
 
 enum SummarizationFactory {
@@ -65,19 +73,28 @@ struct AppleSummarizationService: SummarizationService {
         return false
     }
 
-    func summarize(_ text: String) async throws -> String {
+    func summarize(
+        _ text: String,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> String {
         try ensureAvailable()
         let chunks = Self.chunk(text)
         if chunks.count == 1 {
-            return try await summarizeChunk(chunks[0])
+            let result = try await summarizeChunk(chunks[0])
+            onProgress?(1.0)
+            return result
         }
         // Map-reduce: summarize each chunk, then summarize the summaries.
+        // Budget: chunks share 80% of the bar, final reduce step gets the last 20%.
         var partials: [String] = []
-        for chunk in chunks {
+        for (i, chunk) in chunks.enumerated() {
             let s = try await summarizeChunk(chunk)
             partials.append(s)
+            onProgress?(0.8 * Double(i + 1) / Double(chunks.count))
         }
-        return try await summarizeChunk(partials.joined(separator: "\n\n"))
+        let final = try await summarizeChunk(partials.joined(separator: "\n\n"))
+        onProgress?(1.0)
+        return final
     }
 
     private func summarizeChunk(_ text: String) async throws -> String {
@@ -117,21 +134,24 @@ struct AppleSummarizationService: SummarizationService {
         return Self.cleanTitle(response.content)
     }
 
-    func extract(from text: String) async throws -> MeetingExtraction {
+    func extract(
+        from text: String,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> MeetingExtraction {
         try ensureAvailable()
         let chunks = Self.chunk(text)
         if chunks.count == 1 {
-            return try await extractFromChunk(chunks[0])
+            let result = try await extractFromChunk(chunks[0])
+            onProgress?(1.0)
+            return result
         }
-        // Run each chunk through extraction, then merge: union of decisions, union of
-        // action items. Duplicates (same task across chunks) are tolerated rather than
-        // de-duped — the model is conservative and false negatives are worse than dupes.
         var decisions: [String] = []
         var actions: [ActionItem] = []
-        for chunk in chunks {
+        for (i, chunk) in chunks.enumerated() {
             let e = try await extractFromChunk(chunk)
             decisions.append(contentsOf: e.decisions)
             actions.append(contentsOf: e.actionItems)
+            onProgress?(Double(i + 1) / Double(chunks.count))
         }
         return MeetingExtraction(decisions: decisions, actionItems: actions)
     }
@@ -214,8 +234,12 @@ struct AppleSummarizationService: SummarizationService {
 /// Placeholder used on devices without Apple Intelligence. Echoes the first couple of sentences
 /// so the UI has something to render. Returns empty meeting extraction.
 struct MockSummarizationService: SummarizationService {
-    func summarize(_ text: String) async throws -> String {
+    func summarize(
+        _ text: String,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> String {
         try await Task.sleep(nanoseconds: 200_000_000)
+        onProgress?(1.0)
         let sentences = text
             .split(whereSeparator: { ".!?".contains($0) })
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -233,7 +257,11 @@ struct MockSummarizationService: SummarizationService {
         return words.isEmpty ? "Untitled recording" : "Note: \(words)"
     }
 
-    func extract(from text: String) async throws -> MeetingExtraction {
-        .empty
+    func extract(
+        from text: String,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> MeetingExtraction {
+        onProgress?(1.0)
+        return .empty
     }
 }

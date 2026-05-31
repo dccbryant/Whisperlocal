@@ -130,6 +130,32 @@ struct RootView: View {
         }
     }
 
+    private func processingRow(label: String) -> some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                ProgressView().tint(BraunPalette.foreground)
+                Text(label).braunLabel()
+                if let p = session.stageProgress {
+                    Text("\(Int(p * 100))%")
+                        .braunDigit(size: 11)
+                        .foregroundStyle(BraunPalette.secondary)
+                }
+            }
+            if let p = session.stageProgress {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(BraunPalette.divider)
+                        Rectangle()
+                            .fill(BraunPalette.foreground)
+                            .frame(width: geo.size.width * CGFloat(p))
+                            .animation(.easeOut(duration: 0.2), value: p)
+                    }
+                }
+                .frame(width: 220, height: 2)
+            }
+        }
+    }
+
     @ViewBuilder
     private var statusLine: some View {
         switch session.stage {
@@ -147,15 +173,9 @@ struct RootView: View {
                     .opacity(session.recorder.isPaused ? 0.4 : 1)
             }
         case .transcribing:
-            HStack(spacing: 10) {
-                ProgressView().tint(BraunPalette.foreground)
-                Text("Transcribing").braunLabel()
-            }
+            processingRow(label: "Transcribing")
         case .summarizing:
-            HStack(spacing: 10) {
-                ProgressView().tint(BraunPalette.foreground)
-                Text("Summarizing").braunLabel()
-            }
+            processingRow(label: "Summarizing")
         case .done:
             Text("Saved").braunLabel()
         case .failed(let m):
@@ -249,9 +269,14 @@ func importExternalAudio(
     let needsScope = sourceURL.startAccessingSecurityScopedResource()
     defer { if needsScope { sourceURL.stopAccessingSecurityScopedResource() } }
 
-    let dir = library.directory
+    // Copy into temp, not the library directory. The processing pipeline reads from a
+    // plaintext temp file and then encrypts into the library; if we copied directly into
+    // the library, ingestAudio would encrypt the file in place and then delete the same
+    // path it just wrote to — losing the audio entirely.
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("ParleyImport", isDirectory: true)
+    try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
     let name = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-    let destination = dir.appendingPathComponent("\(name)-\(sourceURL.lastPathComponent)")
+    let destination = tempDir.appendingPathComponent("\(name)-\(sourceURL.lastPathComponent)")
     do {
         try FileManager.default.copyItem(at: sourceURL, to: destination)
     } catch {

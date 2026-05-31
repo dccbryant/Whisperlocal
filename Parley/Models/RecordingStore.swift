@@ -73,7 +73,11 @@ final class RecordingStore: ObservableObject {
         let filename = sourceURL.lastPathComponent
         let destination = directory.appendingPathComponent(filename)
         try EncryptedStore.writeEncrypted(data, to: destination)
-        if deleteSource { try? FileManager.default.removeItem(at: sourceURL) }
+        // Defensive: if a caller mistakenly handed us a path inside the library directory,
+        // don't delete the file we just wrote to it.
+        if deleteSource, sourceURL.standardizedFileURL != destination.standardizedFileURL {
+            try? FileManager.default.removeItem(at: sourceURL)
+        }
         return filename
     }
 
