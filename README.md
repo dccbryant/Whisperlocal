@@ -1,82 +1,75 @@
-# Whisperlocal
+# Parley
 
-An iOS app that records audio, transcribes it, and summarizes it — **entirely on your device**. No cloud, no analytics, no network.
+An iOS app that records conversations, identifies speakers, transcribes them, and summarizes them — **entirely on your device**. No cloud, no analytics, no telemetry.
 
-> Status: **Phase 2**. Recording + real on-device transcription via `whisper.cpp` work end-to-end. Summarization is still mock (Phase 3).
+Originally prototyped under the name *Whisperlocal*. Renamed to Parley — an English word for a private confidential conversation.
+
+> Status: **Phase 4**. End-to-end on-device pipeline: record → speaker diarization (SpeakerKit) → transcription (WhisperKit) → summarization (Apple Foundation Models). Braun-inspired UI. Persistent recording library. Share-sheet export.
 
 ## Privacy posture
 
 - `NSAppTransportSecurity` blocks arbitrary loads (HTTPS-only).
 - No iCloud / CloudKit containers; no analytics SDKs.
 - Microphone usage string is explicit about local-only processing.
-- **One network call, ever**: the first launch downloads the Whisper model from Hugging Face. After that, audio and transcripts never leave the device. The download can be replaced by bundling the model file into `Whisperlocal/Resources/Models/` if you'd prefer zero network use.
+- **One network call, ever**: the first launch lets WhisperKit fetch the Whisper CoreML model from Hugging Face. After that, audio and transcripts never leave the device.
 
 ## Requirements
 
 - macOS with Xcode 15.3+
-- iOS 17.0+ device or simulator (mic recording works on device; simulator mic works on macOS hosts with input)
-- Optional but recommended: [XcodeGen](https://github.com/yonaskolb/XcodeGen) — `brew install xcodegen`
+- iOS 17.0+ device or simulator (real device strongly recommended — Whisper's CoreML pipeline is unreliable on the iOS Simulator)
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen) — `brew install xcodegen`
 
 ## Getting started
 
-### Option A — XcodeGen (recommended)
-
 ```bash
-brew install xcodegen      # one-time
-xcodegen generate          # produces Whisperlocal.xcodeproj
-open Whisperlocal.xcodeproj
+brew install xcodegen        # one-time
+xcodegen generate            # produces Parley.xcodeproj
+open Parley.xcodeproj
 ```
 
-Then in Xcode: select the **Whisperlocal** scheme, choose your device, and Run.
-
-### Option B — Hand-rolled Xcode project
-
-1. Xcode → File → New → Project → iOS → App.
-2. Product Name: `Whisperlocal`. Interface: SwiftUI. Language: Swift. Min deployment: iOS 17.0.
-3. Delete the generated `ContentView.swift` and `WhisperlocalApp.swift`.
-4. Drag the `Whisperlocal/` folder from this repo into the project navigator (Copy if needed, Create groups).
-5. Replace the generated `Info.plist` with `Whisperlocal/Info.plist`, or copy these keys over:
-   - `NSMicrophoneUsageDescription`
-   - `NSAppTransportSecurity` → `NSAllowsArbitraryLoads = false`
-6. Add `Whisperlocal/Whisperlocal.entitlements` to the target (Signing & Capabilities → drag in).
-7. Build & Run.
+In Xcode: pick your iPhone in the destination picker, then ▶ Run. First launch downloads the on-device speech and speaker models in the background; you'll see "Preparing models…" until they're ready.
 
 ## Project layout
 
 ```
-Whisperlocal/
-├── WhisperlocalApp.swift         # @main entry
-├── SessionStore.swift            # app state machine: record → transcribe → summarize
+Parley/
+├── ParleyApp.swift                # @main entry
+├── SessionStore.swift             # state machine: record → transcribe → summarize
 ├── Info.plist
-├── Whisperlocal.entitlements
+├── Parley.entitlements
 ├── Audio/
-│   └── AudioRecorder.swift       # AVAudioRecorder wrapper, 16 kHz mono AAC
+│   └── AudioRecorder.swift
 ├── Transcription/
-│   └── TranscriptionService.swift  # protocol + Mock impl. Whisper.cpp impl lands in Phase 2.
+│   ├── AudioFileReader.swift
+│   └── WhisperKitTranscriptionService.swift
 ├── Summarization/
-│   └── SummarizationService.swift  # protocol + Mock impl. Llama.cpp impl lands in Phase 3.
+│   └── SummarizationService.swift
 ├── Models/
-│   └── Recording.swift
-├── Views/
-│   └── RootView.swift            # SwiftUI UI
-└── Resources/                    # bundled assets; downloaded models live under Models/ (gitignored)
+│   ├── Recording.swift
+│   ├── RecordingStore.swift       # persistent library
+│   └── RecordingExport.swift      # share-sheet formatting
+└── Views/
+    ├── DesignSystem.swift         # Braun 1968 palette + type
+    ├── RootView.swift
+    ├── LibraryView.swift
+    └── RecordingDetailView.swift
 ```
 
 ## Roadmap
 
 - **Phase 1 (done):** Scaffold + recording + mock services + UI flow.
-- **Phase 2 (done):** [whisper.cpp](https://github.com/ggerganov/whisper.cpp) via SwiftPM. First-launch download of `ggml-small.en-q5_1.bin` (~190 MB) into Application Support, with progress UI. Real `WhisperCppTranscriptionService` decoding AAC → 16 kHz PCM via AVFoundation and running Whisper on-device.
-- **Phase 3:** Integrate [llama.cpp](https://github.com/ggerganov/llama.cpp) with a quantized small instruct model (e.g. Llama 3.2 3B Q4_K_M). Real `LlamaCppSummarizationService` with a summarization prompt template.
-- **Phase 4 polish:** Recording library with on-device search, export to plain text, share sheet (user-initiated), background processing, accessibility.
+- **Phase 2 (done):** WhisperKit for on-device transcription on the Neural Engine.
+- **Phase 3 (done):** SpeakerKit diarization, Apple Foundation Models summarization, share sheet, date/time on results.
+- **Phase 4 (done):** Braun 1968 redesign, persistent recording library, formatted share output.
+- **Phase 5 ideas:** Recording playback, on-device search, accessibility audit, app icon + launch screen, multilingual model option.
 
-## Bundling the model instead of downloading it
+## Apple Intelligence requirement for summarization
 
-If you'd rather ship the model inside the app (zero network use, larger `.ipa`):
+The on-device summarizer uses Apple's `FoundationModels` framework, which needs **iOS 26+** running on an Apple Intelligence capable device (iPhone 15 Pro / Pro Max / 16 family or newer). On any other device, summarization gracefully degrades to a placeholder — transcription and diarization still work everywhere iOS 17+ runs.
 
-1. Download `ggml-small.en-q5_1.bin` from <https://huggingface.co/ggerganov/whisper.cpp> on your Mac.
-2. Drop it into `Whisperlocal/Resources/Models/`.
-3. In Xcode, make sure the file is included in the **Whisperlocal** target (check it under Target Membership in the File Inspector).
-4. `ModelStore.bundledURL()` will find it and skip the download.
+## Choosing a different Whisper model
+
+WhisperKit defaults to `openai_whisper-base.en` (small, fast, English-only). To use a different one — e.g. the more accurate `openai_whisper-small.en` or multilingual `openai_whisper-base` — change `defaultWhisperModel` in `Parley/Transcription/WhisperKitTranscriptionService.swift`. Available models are listed in WhisperKit's README.
 
 ## License
 

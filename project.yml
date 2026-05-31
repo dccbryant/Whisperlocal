@@ -1,6 +1,6 @@
-name: Whisperlocal
+name: Parley
 options:
-  bundleIdPrefix: com.whisperlocal
+  bundleIdPrefix: com.davidbryant
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
@@ -8,45 +8,85 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    DEVELOPMENT_TEAM: ""
+    DEVELOPMENT_TEAM: "2A29M932WB"
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
 
 packages:
-  whisper:
-    url: https://github.com/ggerganov/whisper.cpp
-    branch: master
+  WhisperKit:
+    url: https://github.com/argmaxinc/argmax-oss-swift.git
+    branch: main
 
 targets:
-  Whisperlocal:
+  Parley:
     type: application
     platform: iOS
     sources:
-      - path: Whisperlocal
+      - path: Parley
+      - path: Shared
     resources:
-      - path: Whisperlocal/Resources
+      - path: Parley/Resources
     dependencies:
-      - package: whisper
-        product: whisper
+      - target: ParleyLiveActivity
+      - package: WhisperKit
+        product: WhisperKit
+      - package: WhisperKit
+        product: SpeakerKit
     info:
-      path: Whisperlocal/Info.plist
+      path: Parley/Info.plist
       properties:
-        CFBundleDisplayName: Whisperlocal
+        CFBundleDisplayName: Parley
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
-        UILaunchScreen: {}
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        NSMicrophoneUsageDescription: "Whisperlocal needs the microphone to record audio that you choose to transcribe. Audio never leaves your device."
+        NSMicrophoneUsageDescription: "Parley needs the microphone to record audio that you choose to transcribe. Audio never leaves your device."
+        NSFaceIDUsageDescription: "Parley uses Face ID to keep your recordings private. Audio and transcripts never leave your device."
         ITSAppUsesNonExemptEncryption: false
+        UIBackgroundModes:
+          - audio
+        NSSupportsLiveActivities: true
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Audio
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.audio
+              - public.mp3
+              - com.microsoft.waveform-audio
+              - public.mpeg-4-audio
+        LSSupportsOpeningDocumentsInPlace: false
+        UISupportsDocumentBrowser: false
     entitlements:
-      path: Whisperlocal/Whisperlocal.entitlements
+      path: Parley/Parley.entitlements
       properties: {}
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.whisperlocal.app
+        PRODUCT_BUNDLE_IDENTIFIER: com.davidbryant.parley
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
-        CODE_SIGN_ENTITLEMENTS: Whisperlocal/Whisperlocal.entitlements
+        CODE_SIGN_ENTITLEMENTS: Parley/Parley.entitlements
+
+  ParleyLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ParleyLiveActivity
+      - path: Shared
+    info:
+      path: ParleyLiveActivity/Info.plist
+      properties:
+        CFBundleDisplayName: Parley Live Activity
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.davidbryant.parley.LiveActivity
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
