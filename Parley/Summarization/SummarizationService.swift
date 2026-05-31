@@ -153,7 +153,33 @@ struct AppleSummarizationService: SummarizationService {
             actions.append(contentsOf: e.actionItems)
             onProgress?(Double(i + 1) / Double(chunks.count))
         }
-        return MeetingExtraction(decisions: decisions, actionItems: actions)
+        return MeetingExtraction(
+            decisions: Self.dedupe(decisions),
+            actionItems: Self.dedupe(actions)
+        )
+    }
+
+    /// De-dupe by lowercased string equality. Crude but effective for the common case where
+    /// the same decision is extracted from two overlapping chunks.
+    private static func dedupe(_ strings: [String]) -> [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for s in strings where seen.insert(s.lowercased()).inserted {
+            out.append(s)
+        }
+        return out
+    }
+
+    /// De-dupe action items by lowercased assignee+task. Due dates ignored — if the model
+    /// got the task right twice, it almost certainly meant the same item.
+    private static func dedupe(_ items: [ActionItem]) -> [ActionItem] {
+        var seen = Set<String>()
+        var out: [ActionItem] = []
+        for item in items {
+            let key = "\(item.assignee.lowercased())|\(item.task.lowercased())"
+            if seen.insert(key).inserted { out.append(item) }
+        }
+        return out
     }
 
     private func extractFromChunk(_ text: String) async throws -> MeetingExtraction {

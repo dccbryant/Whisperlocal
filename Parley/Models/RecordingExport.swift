@@ -48,14 +48,14 @@ enum RecordingExport {
 
         if let summary = recording.summary, !summary.isEmpty {
             lines.append("────── SUMMARY ──────")
-            lines.append(summary)
+            lines.append(recording.resolveSpeakerReferences(in: summary))
             lines.append("")
         }
 
         if !recording.decisions.isEmpty {
             lines.append("────── DECISIONS ──────")
             for d in recording.decisions {
-                lines.append("• \(d)")
+                lines.append("• \(recording.resolveSpeakerReferences(in: d))")
             }
             lines.append("")
         }
@@ -63,7 +63,8 @@ enum RecordingExport {
         if !recording.actionItems.isEmpty {
             lines.append("────── ACTION ITEMS ──────")
             for item in recording.actionItems {
-                var line = "• \(item.assignee): \(item.task)"
+                let who = recording.displayName(for: item.assignee)
+                var line = "• \(who): \(recording.resolveSpeakerReferences(in: item.task))"
                 if let due = item.dueDate, !due.isEmpty {
                     line += " (by \(due))"
                 }

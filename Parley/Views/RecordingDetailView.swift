@@ -38,7 +38,9 @@ struct RecordingDetailView: View {
                     playerBar
                     if let summary = current.summary, !summary.isEmpty {
                         BraunCard(title: "Summary") {
-                            Text(summary).braunBody().textSelection(.enabled)
+                            Text(current.resolveSpeakerReferences(in: summary))
+                                .braunBody()
+                                .textSelection(.enabled)
                         }
                     }
                     if !current.decisions.isEmpty {
@@ -195,7 +197,9 @@ struct RecordingDetailView: View {
             ForEach(current.decisions, id: \.self) { d in
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text("·").braunBody()
-                    Text(d).braunBody().textSelection(.enabled)
+                    Text(current.resolveSpeakerReferences(in: d))
+                        .braunBody()
+                        .textSelection(.enabled)
                 }
             }
         }
@@ -223,7 +227,9 @@ struct RecordingDetailView: View {
                             Text("· \(due)").braunLabel(size: 10).foregroundStyle(BraunPalette.secondary)
                         }
                     }
-                    Text(item.task).braunBody().textSelection(.enabled)
+                    Text(current.resolveSpeakerReferences(in: item.task))
+                        .braunBody()
+                        .textSelection(.enabled)
                 }
             }
         }

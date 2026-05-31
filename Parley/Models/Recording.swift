@@ -81,6 +81,21 @@ struct Recording: Identifiable, Hashable, Codable {
         customSpeakerNames[speakerLabel] ?? speakerLabel
     }
 
+    /// Replace every "Speaker N" reference in arbitrary text with its custom display name.
+    /// Lets the LLM-generated summary, decisions, and action item tasks track speaker renames
+    /// without needing structured fields for every mention.
+    /// Longer labels are replaced first so "Speaker 10" doesn't get clobbered by "Speaker 1".
+    func resolveSpeakerReferences(in text: String) -> String {
+        guard !customSpeakerNames.isEmpty else { return text }
+        var result = text
+        let sortedLabels = customSpeakerNames.keys.sorted { $0.count > $1.count }
+        for label in sortedLabels {
+            guard let name = customSpeakerNames[label], !name.isEmpty else { continue }
+            result = result.replacingOccurrences(of: label, with: name)
+        }
+        return result
+    }
+
     /// Distinct raw speaker labels in first-appearance order.
     var distinctSpeakerLabels: [String] {
         var seen = Set<String>()
