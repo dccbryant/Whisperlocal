@@ -58,6 +58,8 @@ targets:
               - public.mp3
               - com.microsoft.waveform-audio
               - public.mpeg-4-audio
+        LSSupportsOpeningDocumentsInPlace: false
+        UISupportsDocumentBrowser: false
     entitlements:
       path: Parley/Parley.entitlements
       properties: {}
