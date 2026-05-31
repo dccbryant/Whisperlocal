@@ -107,7 +107,14 @@ final class SessionStore: ObservableObject {
             stage = .summarizing
             let summary = try await summarizer.summarize(transcriptText)
             let title = try? await summarizer.title(for: transcriptText)
-            let extraction = (try? await summarizer.extract(from: transcriptText)) ?? .empty
+            let extraction: MeetingExtraction
+            do {
+                extraction = try await summarizer.extract(from: transcriptText)
+                print("[Extract] decisions=\(extraction.decisions.count) actions=\(extraction.actionItems.count)")
+            } catch {
+                print("[Extract] failed: \(error)")
+                extraction = .empty
+            }
 
             let filename = try library.ingestAudio(from: url)
             var rec = Recording(
