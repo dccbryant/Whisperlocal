@@ -11,12 +11,14 @@ struct TranscriptSegment: Identifiable, Hashable, Codable {
 
 struct ActionItem: Identifiable, Hashable, Codable {
     var id = UUID()
-    /// Display name of the person responsible, or "Unassigned" when the model can't attribute it.
-    let assignee: String
+    /// Either a raw speaker label like "Speaker 1" (resolves through the recording's
+    /// `displayName(for:)` so transcript renames flow into action items automatically),
+    /// or a freeform name the model extracted, or "Unassigned".
+    var assignee: String
     /// One-sentence description of what needs to be done.
-    let task: String
+    var task: String
     /// Freeform "when" — "Friday", "next Tuesday", "by end of quarter". Nil if not mentioned.
-    let dueDate: String?
+    var dueDate: String?
 }
 
 struct Recording: Identifiable, Hashable, Codable {

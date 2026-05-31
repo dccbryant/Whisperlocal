@@ -163,8 +163,11 @@ struct AppleSummarizationService: SummarizationService {
         Rules:
         - "Decisions" are conclusions reached, not tasks. Examples: "Go with vendor A.", \
         "Move standup to Tuesdays.". Each is one sentence.
-        - "Action items" are concrete next steps someone agreed to do. Attribute the assignee \
-        only when the transcript makes it clear ("Sarah, can you...?"). Otherwise use "Unassigned".
+        - "Action items" are concrete next steps someone agreed to do.
+        - The assignee MUST be one of the speaker labels exactly as they appear in the \
+        transcript ("Speaker 1", "Speaker 2", etc.) — whichever speaker accepted the task. \
+        Use "Unassigned" if no speaker took it on. Do NOT use a person's name; use the \
+        speaker label even when names are mentioned.
         - Only include a due date when the speaker actually stated one. Leave it empty otherwise.
         - If nothing was decided, return an empty decisions array.
         - If no action items were assigned, return an empty actionItems array.

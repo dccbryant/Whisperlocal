@@ -6,7 +6,11 @@ struct RecordingDetailView: View {
     @EnvironmentObject private var library: RecordingStore
     @Environment(\.dismiss) private var dismiss
     @StateObject private var player = AudioPlayer()
-    @State private var renameTarget: String?     // raw speaker label being edited
+    /// Current rename target. When `actionItemId` is nil, the rename targets a speaker label
+    /// (writes to customSpeakerNames). When non-nil, it targets that action item's
+    /// `assignee` field directly (for freeform names the model produced).
+    @State private var renameTarget: String?
+    @State private var renameActionItemId: UUID?
     @State private var renameDraft: String = ""
     /// Path to a decrypted plaintext copy of the audio, written into NSTemporaryDirectory
     /// on view appear and removed on disappear. Audio playback and waveform rendering both
@@ -90,17 +94,23 @@ struct RecordingDetailView: View {
             EncryptedStore.cleanupStagedAudio(stagedAudioURL)
             stagedAudioURL = nil
         }
-        .alert("Rename speaker", isPresented: Binding(
-            get: { renameTarget != nil },
-            set: { if !$0 { renameTarget = nil } }
-        )) {
+        .alert(renameActionItemId == nil ? "Rename speaker" : "Edit assignee",
+               isPresented: Binding(
+                get: { renameTarget != nil },
+                set: { if !$0 { renameTarget = nil; renameActionItemId = nil } }
+               )) {
             TextField("Name", text: $renameDraft)
                 .textInputAutocapitalization(.words)
-            Button("Cancel", role: .cancel) { renameTarget = nil }
+            Button("Cancel", role: .cancel) {
+                renameTarget = nil
+                renameActionItemId = nil
+            }
             Button("Save") { commitRename() }
         } message: {
-            if let raw = renameTarget {
-                Text("Replace \"\(raw)\" with a custom name. Leave blank to reset.")
+            if renameActionItemId != nil {
+                Text("Edit this action item's assignee. Leave blank to mark Unassigned.")
+            } else if let raw = renameTarget {
+                Text("Replace \"\(raw)\" with a custom name. Leave blank to reset. This also updates the transcript.")
             }
         }
     }
@@ -196,7 +206,19 @@ struct RecordingDetailView: View {
             ForEach(current.actionItems) { item in
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
-                        Text(item.assignee).braunLabel(size: 10).foregroundStyle(BraunPalette.accent)
+                        Button {
+                            beginRenameForActionItem(item)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(current.displayName(for: item.assignee))
+                                    .braunLabel(size: 10)
+                                    .foregroundStyle(BraunPalette.accent)
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 8, weight: .semibold))
+                                    .foregroundStyle(BraunPalette.secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
                         if let due = item.dueDate, !due.isEmpty {
                             Text("· \(due)").braunLabel(size: 10).foregroundStyle(BraunPalette.secondary)
                         }
@@ -255,20 +277,46 @@ struct RecordingDetailView: View {
 
     private func beginRename(rawLabel: String) {
         renameTarget = rawLabel
+        renameActionItemId = nil
         renameDraft = current.customSpeakerNames[rawLabel] ?? ""
+    }
+
+    /// Called from the action items list. If the assignee is a speaker label, we route to
+    /// the same speaker-rename path used by the transcript so the edit flows everywhere.
+    /// If it's a freeform name the model produced, we edit the action item directly.
+    private func beginRenameForActionItem(_ item: ActionItem) {
+        let assignee = item.assignee
+        let isSpeakerLabel = current.distinctSpeakerLabels.contains(assignee)
+        if isSpeakerLabel {
+            renameTarget = assignee
+            renameActionItemId = nil
+            renameDraft = current.customSpeakerNames[assignee] ?? ""
+        } else {
+            renameTarget = assignee
+            renameActionItemId = item.id
+            renameDraft = assignee == "Unassigned" ? "" : assignee
+        }
     }
 
     private func commitRename() {
         guard let raw = renameTarget else { return }
         var updated = current
         let trimmed = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            updated.customSpeakerNames.removeValue(forKey: raw)
+
+        if let id = renameActionItemId,
+           let idx = updated.actionItems.firstIndex(where: { $0.id == id }) {
+            updated.actionItems[idx].assignee = trimmed.isEmpty ? "Unassigned" : trimmed
         } else {
-            updated.customSpeakerNames[raw] = trimmed
+            if trimmed.isEmpty {
+                updated.customSpeakerNames.removeValue(forKey: raw)
+            } else {
+                updated.customSpeakerNames[raw] = trimmed
+            }
         }
+
         library.save(updated)
         renameTarget = nil
+        renameActionItemId = nil
         renameDraft = ""
     }
 

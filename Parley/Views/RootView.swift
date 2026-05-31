@@ -133,7 +133,6 @@ struct RootView: View {
     private func processingRow(label: String) -> some View {
         VStack(spacing: 10) {
             HStack(spacing: 10) {
-                ProgressView().tint(BraunPalette.foreground)
                 Text(label).braunLabel()
                 if let p = session.stageProgress {
                     Text("\(Int(p * 100))%")

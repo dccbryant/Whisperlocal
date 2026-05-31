@@ -23,35 +23,48 @@ final class WaveformModel: ObservableObject {
     nonisolated private static func computePeaks(url: URL, buckets: Int) -> [Float] {
         guard let file = try? AVAudioFile(forReading: url) else { return [] }
         let format = file.processingFormat
-        let totalFrames = AVAudioFrameCount(file.length)
-        guard totalFrames > 0,
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: totalFrames) else {
-            return []
-        }
-        do {
-            try file.read(into: buffer)
-        } catch {
-            return []
-        }
-        guard let channel = buffer.floatChannelData?.pointee else { return [] }
-        let frames = Int(buffer.frameLength)
-        guard frames > 0, buckets > 0 else { return [] }
+        let totalFrames = Int(file.length)
+        guard totalFrames > 0, buckets > 0 else { return [] }
 
-        let perBucket = max(1, frames / buckets)
+        // Stream the file rather than allocating one buffer at full length — a 30-minute
+        // 44.1 kHz file would need ~300 MB up front, which silently fails to allocate and
+        // leaves the waveform empty. Pull 64 K frames at a time and roll the bucket peaks
+        // forward as we go.
+        let chunkCapacity: AVAudioFrameCount = 65_536
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkCapacity) else {
+            return []
+        }
+        let perBucket = max(1, totalFrames / buckets)
         var out: [Float] = []
         out.reserveCapacity(buckets)
-        var i = 0
-        while i < frames {
-            let end = min(i + perBucket, frames)
-            var peak: Float = 0
-            for j in i..<end {
-                let v = abs(channel[j])
-                if v > peak { peak = v }
+        var bucketRemaining = perBucket
+        var currentPeak: Float = 0
+
+        while out.count < buckets {
+            do {
+                try file.read(into: buffer)
+            } catch {
+                break
             }
-            out.append(peak)
-            i = end
+            let framesRead = Int(buffer.frameLength)
+            if framesRead == 0 { break }
+            guard let channel = buffer.floatChannelData?.pointee else { break }
+            for i in 0..<framesRead {
+                let v = abs(channel[i])
+                if v > currentPeak { currentPeak = v }
+                bucketRemaining -= 1
+                if bucketRemaining <= 0 {
+                    out.append(currentPeak)
+                    currentPeak = 0
+                    bucketRemaining = perBucket
+                    if out.count >= buckets { break }
+                }
+            }
         }
-        // Normalise so the loudest bucket fills the view.
+        // Flush any partial trailing bucket so very short files still render something.
+        if out.count < buckets, currentPeak > 0 {
+            out.append(currentPeak)
+        }
         if let maxPeak = out.max(), maxPeak > 0 {
             out = out.map { $0 / maxPeak }
         }
