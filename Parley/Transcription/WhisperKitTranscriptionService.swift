@@ -60,8 +60,32 @@ actor DiarizingTranscriptionService: TranscriptionService {
         guard !samples.isEmpty else { throw ServiceError.empty }
 
         // Diarization gets ~30% of the progress budget; per-segment transcription gets ~70%.
+        // SpeakerKit's diarize() is one opaque call that takes 20-40s with no internal
+        // signal, so the bar would otherwise sit at 0% the whole time. Spin up a background
+        // task that creeps the reported progress upward along an ease-out curve toward
+        // (but never reaching) 0.25, so the user can see the app is alive. The real 0.3
+        // lands the moment diarization actually finishes.
         onProgress?(0)
-        let diarization = try await speakers.diarize(audioArray: samples)
+        let creepTask: Task<Void, Never>? = onProgress.map { cb in
+            Task {
+                var elapsed: Double = 0
+                while !Task.isCancelled {
+                    do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
+                    elapsed += 1
+                    let p = 0.25 * (1 - exp(-elapsed / 15))
+                    cb(p)
+                }
+            }
+        }
+
+        let diarization: DiarizationResult
+        do {
+            diarization = try await speakers.diarize(audioArray: samples)
+        } catch {
+            creepTask?.cancel()
+            throw error
+        }
+        creepTask?.cancel()
         onProgress?(0.3)
 
         // No speakers detected → single-shot transcribe.
