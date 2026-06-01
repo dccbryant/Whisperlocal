@@ -34,7 +34,10 @@ actor DiarizingTranscriptionService: TranscriptionService {
         }
     }
 
-    static let defaultWhisperModel = "openai_whisper-base.en"
+    /// `small.en` is meaningfully more accurate than `base.en` (especially on names,
+    /// numbers, and crosstalk) at the cost of a ~250 MB first-launch download instead
+    /// of ~75 MB and slightly slower transcription on older devices.
+    static let defaultWhisperModel = "openai_whisper-small.en"
 
     private var whisper: WhisperKit?
     private var speakers: SpeakerKit?

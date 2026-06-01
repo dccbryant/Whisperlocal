@@ -159,45 +159,97 @@ struct AppleSummarizationService: SummarizationService {
         )
     }
 
-    /// De-dupe by lowercased string equality. Crude but effective for the common case where
-    /// the same decision is extracted from two overlapping chunks.
+    /// Normalize a string for fuzzy comparison: lowercase, strip punctuation, drop common
+    /// filler words. Catches "send the email" / "send email" / "Send an Email!" as the same.
+    private static let stopwords: Set<String> = [
+        "the", "a", "an", "to", "for", "and", "or", "but", "by", "of", "in", "on",
+        "with", "from", "is", "it", "this", "that", "be", "will",
+    ]
+
+    private static func normalize(_ s: String) -> String {
+        let lowered = s.lowercased()
+        let stripped = lowered.unicodeScalars
+            .filter { CharacterSet.alphanumerics.contains($0) || $0 == " " }
+            .reduce(into: "") { $0.append(Character($1)) }
+        return stripped
+            .split(separator: " ")
+            .map(String.init)
+            .filter { !stopwords.contains($0) }
+            .joined(separator: " ")
+    }
+
+    /// True if two normalized strings are duplicates: identical, or one contains the other.
+    private static func roughlyEqual(_ a: String, _ b: String) -> Bool {
+        if a == b { return true }
+        if a.isEmpty || b.isEmpty { return false }
+        return a.contains(b) || b.contains(a)
+    }
+
+    /// De-dupe decisions by fuzzy match.
     private static func dedupe(_ strings: [String]) -> [String] {
-        var seen = Set<String>()
         var out: [String] = []
-        for s in strings where seen.insert(s.lowercased()).inserted {
-            out.append(s)
+        var seen: [String] = []
+        for s in strings {
+            let n = normalize(s)
+            if !seen.contains(where: { roughlyEqual($0, n) }) {
+                out.append(s)
+                seen.append(n)
+            }
         }
         return out
     }
 
-    /// De-dupe action items by lowercased assignee+task. Due dates ignored — if the model
-    /// got the task right twice, it almost certainly meant the same item.
+    /// De-dupe action items by assignee + fuzzy task match. Keeps the longest task wording
+    /// when duplicates collide — that one usually has the most context.
     private static func dedupe(_ items: [ActionItem]) -> [ActionItem] {
-        var seen = Set<String>()
         var out: [ActionItem] = []
         for item in items {
-            let key = "\(item.assignee.lowercased())|\(item.task.lowercased())"
-            if seen.insert(key).inserted { out.append(item) }
+            let normTask = normalize(item.task)
+            let assignee = item.assignee.lowercased()
+            if let existingIdx = out.firstIndex(where: {
+                $0.assignee.lowercased() == assignee && roughlyEqual(normalize($0.task), normTask)
+            }) {
+                if item.task.count > out[existingIdx].task.count {
+                    out[existingIdx] = item
+                }
+            } else {
+                out.append(item)
+            }
         }
         return out
     }
 
     private func extractFromChunk(_ text: String) async throws -> MeetingExtraction {
         let instructions = """
-        You extract structured meeting notes from a transcript. Be conservative.
+        Extract decisions and action items from this meeting transcript.
 
-        Rules:
-        - "Decisions" are conclusions reached, not tasks. Examples: "Go with vendor A.", \
-        "Move standup to Tuesdays.". Each is one sentence.
-        - "Action items" are concrete next steps someone agreed to do.
-        - The assignee MUST be one of the speaker labels exactly as they appear in the \
-        transcript ("Speaker 1", "Speaker 2", etc.) — whichever speaker accepted the task. \
-        Use "Unassigned" if no speaker took it on. Do NOT use a person's name; use the \
-        speaker label even when names are mentioned.
-        - Only include a due date when the speaker actually stated one. Leave it empty otherwise.
-        - If nothing was decided, return an empty decisions array.
-        - If no action items were assigned, return an empty actionItems array.
-        - Do NOT invent decisions or actions that were not in the transcript.
+        DECISIONS = conclusions the group reached. Be inclusive — extract any conclusion, \
+        not just formal ones.
+        Look for phrases like:
+          • "We've decided to..."
+          • "Let's go with..."
+          • "I think we should..." (followed by agreement)
+          • "It's settled, ..."
+          • "We're going to..."
+        Format each as one sentence. Empty array if nothing was concluded.
+
+        ACTION ITEMS = anything someone said they would do, will do, or was asked to do.
+        Be inclusive. Look for phrases like:
+          • "I'll handle..." / "I'll take care of..."
+          • "Can you...?" (and any affirmative response)
+          • "Let me check..." / "Let me look into..."
+          • "We need to..." (when assigned to a specific speaker)
+          • "You should..." / "Please..."
+
+        For each action item:
+          • assignee: speaker label of whoever took the task (e.g. "Speaker 1", "Speaker 2"). \
+        Use "Unassigned" only when truly no speaker accepted it. Do NOT use a person's name — \
+        always the speaker label.
+          • task: what they'll do, one sentence in the imperative.
+          • dueDate: only if a time was explicitly mentioned (e.g. "Friday", "next week", \
+        "end of quarter"). Empty string otherwise.
+
+        Empty array if no action items. Do NOT invent items not in the transcript.
         """
         let session = LanguageModelSession(instructions: instructions)
         let response = try await session.respond(to: "Transcript:\n\(text)",

@@ -157,29 +157,46 @@ struct RootView: View {
 
     @ViewBuilder
     private var statusLine: some View {
-        switch session.stage {
-        case .idle:
-            Text("Tap to record").braunLabel()
-        case .recording:
-            VStack(spacing: 10) {
-                if session.recorder.isPaused {
-                    Text("Paused").braunLabel(size: 11).foregroundStyle(BraunPalette.recording)
+        Group {
+            switch session.stage {
+            case .idle:
+                Text("Tap to record").braunLabel()
+            case .recording:
+                VStack(spacing: 10) {
+                    if session.recorder.isPaused {
+                        Text("Paused").braunLabel(size: 11).foregroundStyle(BraunPalette.recording)
+                    }
+                    Text(Self.formatElapsed(session.recorder.elapsed))
+                        .font(.system(size: 28, weight: .light))
+                        .monospacedDigit()
+                        .foregroundStyle(BraunPalette.foreground)
+                    BraunLevelMeter(peakDB: session.recorder.peakLevel)
+                        .frame(width: 220, height: 6)
+                        .opacity(session.recorder.isPaused ? 0.4 : 1)
                 }
-                Text(String(format: "%.1f s", session.recorder.elapsed))
-                    .braunDigit(size: 22)
-                BraunLevelMeter(peakDB: session.recorder.peakLevel)
-                    .frame(width: 220, height: 6)
-                    .opacity(session.recorder.isPaused ? 0.4 : 1)
+            case .transcribing:
+                processingRow(label: "Transcribing")
+            case .summarizing:
+                processingRow(label: "Summarizing")
+            case .done:
+                Text("Saved").braunLabel()
+            case .failed(let m):
+                Text(m).font(.system(size: 12)).foregroundStyle(BraunPalette.recording).multilineTextAlignment(.center)
             }
-        case .transcribing:
-            processingRow(label: "Transcribing")
-        case .summarizing:
-            processingRow(label: "Summarizing")
-        case .done:
-            Text("Saved").braunLabel()
-        case .failed(let m):
-            Text(m).font(.system(size: 12)).foregroundStyle(BraunPalette.recording).multilineTextAlignment(.center)
         }
+        // Fixed-height container keeps the record dial above from shifting up/down as the
+        // status content swaps between a single line ("Tap to record") and the multi-line
+        // recording/processing UI. Height set to fit the tallest state (paused recording).
+        .frame(height: 96)
+    }
+
+    /// Format an elapsed-time interval as HH:MM:SS (always three groups).
+    private static func formatElapsed(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds))
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        return String(format: "%02d:%02d:%02d", h, m, s)
     }
 
     private func lastRecordingChip(_ rec: Recording) -> some View {
