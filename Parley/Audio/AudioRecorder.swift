@@ -197,7 +197,11 @@ final class AudioRecorder: NSObject, ObservableObject {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("ParleyRecording", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let name = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        return dir.appendingPathComponent("\(name).wav")
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
+        // Append a short UUID so two recordings can never collide on filename (and therefore
+        // never share a sidecar JSON), even if they start in the same second.
+        let suffix = String(UUID().uuidString.prefix(8))
+        return dir.appendingPathComponent("\(timestamp)-\(suffix).wav")
     }
 }

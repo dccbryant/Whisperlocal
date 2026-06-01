@@ -130,6 +130,16 @@ final class SessionStore: ObservableObject {
                 createdAt: createdAt,
                 duration: duration
             )
+            // Explicit clean slate. Swift's stored-property defaults already give us empty
+            // collections and nil optionals, but spelling it out kills any chance that a
+            // future refactor leaves stale fields visible across recordings.
+            rec.segments = []
+            rec.summary = nil
+            rec.title = nil
+            rec.decisions = []
+            rec.actionItems = []
+            rec.customSpeakerNames = [:]
+
             rec.segments = segments
             rec.summary = summary
             rec.title = title
