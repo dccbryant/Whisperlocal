@@ -73,4 +73,4 @@ WhisperKit defaults to `openai_whisper-base.en` (small, fast, English-only). To 
 
 ## License
 
-TBD — pick one before publishing.
+Apache License 2.0. See [LICENSE](LICENSE). Copyright 2026 David Bryant.
