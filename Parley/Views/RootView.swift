@@ -5,11 +5,16 @@ struct RootView: View {
     @EnvironmentObject private var library: RecordingStore
     @State private var showIconExporter = false
     @State private var showAbout = false
+    @State private var showFeedbackPrompt = false
 
     var body: some View {
         NavigationStack {
             ZStack {
                 BraunPalette.background.ignoresSafeArea()
+                // Shake-to-feedback. The detector view controller lives behind everything,
+                // becomes first responder on appear, and posts onShake on a device shake.
+                ShakeDetector { showFeedbackPrompt = true }
+                    .allowsHitTesting(false)
 
                 VStack(spacing: 0) {
                     titleBar
@@ -36,6 +41,12 @@ struct RootView: View {
             .onOpenURL { url in
                 // Audio file opened from Files / share sheet / "Open in Parley".
                 Task { await importExternalAudio(from: url, session: session, library: library) }
+            }
+            .alert("Send feedback?", isPresented: $showFeedbackPrompt) {
+                Button("Cancel", role: .cancel) { }
+                Button("Open Mail") { FeedbackComposer.open() }
+            } message: {
+                Text("Opens an email to the author with your device details pre-filled. Add what you'd like to share and send.")
             }
         }
     }
@@ -78,9 +89,14 @@ struct RootView: View {
         VStack(spacing: 28) {
             recordDial
             statusLine
-            if let rec = session.lastCompleted, session.stage == .done {
-                NavigationLink(value: rec) {
-                    lastRecordingChip(rec)
+            // Resolve the cached lastCompleted against the live library on every render —
+            // if the user deleted it, the chip disappears (and tapping it never opens a
+            // detail view for a recording that no longer exists).
+            if let cached = session.lastCompleted,
+               session.stage == .done,
+               let live = library.recordings.first(where: { $0.id == cached.id }) {
+                NavigationLink(value: live) {
+                    lastRecordingChip(live)
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 24)

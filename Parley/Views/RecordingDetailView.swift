@@ -65,6 +65,15 @@ struct RecordingDetailView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        // If the recording disappears from the library while we're viewing it (e.g. user
+        // deletes from another path), bail out of this screen instead of falling back to
+        // the cached `recording` value which would show a stale transcript for audio that
+        // is already gone.
+        .onChange(of: library.recordings) { _, new in
+            if !new.contains(where: { $0.id == recording.id }) {
+                dismiss()
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Text("Recording").braunLabel(size: 11)

@@ -20,6 +20,7 @@ struct AboutView: View {
                     privacyCard
                     encryptionCard
                     attacksCard
+                    feedbackCard
                     authorCard
                     Spacer(minLength: 40)
                 }
@@ -102,6 +103,25 @@ struct AboutView: View {
                        outcome: "Same. Key never leaves your device.")
                 attack(scenario: "Jailbreak with file extraction",
                        outcome: "Gets the AES blobs. Cannot decrypt without the Keychain key, which requires the device to be unlocked and Parley to be running.")
+            }
+        }
+    }
+
+    private var feedbackCard: some View {
+        BraunCard(title: "Feedback") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Found a bug, or have something to say? Shake your iPhone anywhere in the app to send a quick email — or tap the button below.")
+                    .braunBody()
+                Button {
+                    FeedbackComposer.open()
+                } label: {
+                    Text("Send Feedback")
+                        .braunLabel(size: 11)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Rectangle().stroke(BraunPalette.foreground, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
             }
         }
     }
