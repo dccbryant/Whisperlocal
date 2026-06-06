@@ -37,7 +37,7 @@ final class ShakeViewController: UIViewController {
 /// Falls back silently if no Mail account is configured — the alert layer above this
 /// can present a graceful message if needed.
 enum FeedbackComposer {
-    static let recipient = "david@specialforcesny.com"
+    static let recipient = "dccbryant@gmail.com"
 
     static func open() {
         let subject = "Parley feedback"
