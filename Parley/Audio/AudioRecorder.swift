@@ -4,10 +4,21 @@ import UIKit
 
 @MainActor
 final class AudioRecorder: NSObject, ObservableObject {
-    enum RecorderError: Error {
+    enum RecorderError: Error, LocalizedError {
         case permissionDenied
         case sessionConfigFailed(Error)
         case recorderInitFailed(Error)
+
+        var errorDescription: String? {
+            switch self {
+            case .permissionDenied:
+                return "Microphone access is off. Enable it in Settings → Parley → Microphone."
+            case .sessionConfigFailed(let e):
+                return "Could not set up the microphone. Another app may be using it. (\(e.localizedDescription))"
+            case .recorderInitFailed(let e):
+                return "Could not start the microphone. Close other recording or call apps and try again. (\(e.localizedDescription))"
+            }
+        }
     }
 
     @Published private(set) var isRecording = false
@@ -58,15 +69,19 @@ final class AudioRecorder: NSObject, ObservableObject {
         ]
 
         let url = Self.makeRecordingURL()
+        // Try once; on failure (usually another app is holding the audio session) bounce
+        // the session and try one more time. Most "couldn't be completed" errors clear.
         do {
-            let r = try AVAudioRecorder(url: url, settings: settings)
-            r.isMeteringEnabled = true
-            guard r.record() else {
-                throw RecorderError.recorderInitFailed(NSError(domain: "AudioRecorder", code: -1))
-            }
-            recorder = r
+            recorder = try Self.makeRecorder(url: url, settings: settings)
         } catch {
-            throw RecorderError.recorderInitFailed(error)
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            try? session.setActive(true)
+            do {
+                recorder = try Self.makeRecorder(url: url, settings: settings)
+            } catch {
+                throw RecorderError.recorderInitFailed(error)
+            }
         }
 
         startedAt = Date()
@@ -188,6 +203,16 @@ final class AudioRecorder: NSObject, ObservableObject {
         @unknown default:
             throw RecorderError.permissionDenied
         }
+    }
+
+    private static func makeRecorder(url: URL, settings: [String: Any]) throws -> AVAudioRecorder {
+        let r = try AVAudioRecorder(url: url, settings: settings)
+        r.isMeteringEnabled = true
+        guard r.record() else {
+            throw NSError(domain: "AudioRecorder", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "AVAudioRecorder.record() returned false"])
+        }
+        return r
     }
 
     private static func makeRecordingURL() -> URL {

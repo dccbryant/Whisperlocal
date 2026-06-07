@@ -197,7 +197,22 @@ struct RootView: View {
             case .done:
                 Text("Saved").braunLabel()
             case .failed(let m):
-                Text(m).font(.system(size: 12)).foregroundStyle(BraunPalette.recording).multilineTextAlignment(.center)
+                VStack(spacing: 10) {
+                    Text(m)
+                        .font(.system(size: 12))
+                        .foregroundStyle(BraunPalette.recording)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                    Button {
+                        session.reset()
+                    } label: {
+                        Text("Try again").braunLabel(size: 11)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 6)
+                            .background(Rectangle().stroke(BraunPalette.foreground, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
         // Fixed-height container keeps the record dial above from shifting up/down as the

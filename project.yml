@@ -36,8 +36,8 @@ targets:
       path: Parley/Info.plist
       properties:
         CFBundleDisplayName: Parley
-        CFBundleShortVersionString: "0.1.2"
-        CFBundleVersion: "6"
+        CFBundleShortVersionString: "0.1.3"
+        CFBundleVersion: "7"
         UILaunchScreen:
           UIColorName: LaunchBackground
         UIApplicationSceneManifest:
@@ -80,8 +80,8 @@ targets:
       path: ParleyLiveActivity/Info.plist
       properties:
         CFBundleDisplayName: Parley Live Activity
-        CFBundleShortVersionString: "0.1.2"
-        CFBundleVersion: "6"
+        CFBundleShortVersionString: "0.1.3"
+        CFBundleVersion: "7"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:

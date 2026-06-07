@@ -54,12 +54,25 @@ final class SessionStore: ObservableObject {
 
     func loadModel() async {
         modelState = .loading
-        do {
-            try await transcriber.load()
-            modelState = .ready
-        } catch {
-            modelState = .failed(error.localizedDescription)
+        // Up to 3 attempts with backoff. The on-device model files can fail to load on
+        // first launch if the Hugging Face download is interrupted or the CoreML compile
+        // step is starved; a retry almost always succeeds.
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                try await transcriber.load()
+                modelState = .ready
+                return
+            } catch {
+                lastError = error
+                if attempt < 3 {
+                    let backoff = UInt64(attempt) * 2_000_000_000
+                    try? await Task.sleep(nanoseconds: backoff)
+                }
+            }
         }
+        let message = lastError?.localizedDescription ?? "Unknown error."
+        modelState = .failed("Could not load the on-device speech models. \(message)")
     }
 
     func startRecording() async {
