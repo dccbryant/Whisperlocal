@@ -124,16 +124,14 @@ final class SessionStore: ObservableObject {
 
             stage = .summarizing
             stageProgress = 0
-            // Budget within .summarizing: summarize 0…0.5, title 0.5…0.55, extract 0.55…1.0.
-            let summary = try await summarizer.summarize(transcriptText) { [weak self] p in
-                Task { @MainActor [weak self] in self?.stageProgress = p * 0.5 }
-            }
-            stageProgress = 0.5
-            let title = try? await summarizer.title(for: transcriptText)
-            stageProgress = 0.55
-            let extraction = (try? await summarizer.extract(from: transcriptText) { [weak self] p in
-                Task { @MainActor [weak self] in self?.stageProgress = 0.55 + p * 0.45 }
+            // Budget within .summarizing: analyze() does the six sub-passes (summary,
+            // attendees, topics, decisions+actions, open questions, key dates) and gets
+            // 0…0.9 of the bar; title() rounds it out from 0.9 to 1.0.
+            let extraction = (try? await summarizer.analyze(transcriptText) { [weak self] p in
+                Task { @MainActor [weak self] in self?.stageProgress = p * 0.9 }
             }) ?? .empty
+            stageProgress = 0.9
+            let title = try? await summarizer.title(for: transcriptText)
             stageProgress = 1.0
 
             let filename = try library.ingestAudio(from: url)
@@ -149,15 +147,23 @@ final class SessionStore: ObservableObject {
             rec.segments = []
             rec.summary = nil
             rec.title = nil
+            rec.attendees = []
+            rec.topics = []
             rec.decisions = []
             rec.actionItems = []
+            rec.openQuestions = []
+            rec.keyDates = []
             rec.customSpeakerNames = [:]
 
             rec.segments = segments
-            rec.summary = summary
+            rec.summary = extraction.summary.isEmpty ? nil : extraction.summary
             rec.title = title
+            rec.attendees = extraction.attendees
+            rec.topics = extraction.topics
             rec.decisions = extraction.decisions
             rec.actionItems = extraction.actionItems
+            rec.openQuestions = extraction.openQuestions
+            rec.keyDates = extraction.keyDates
 
             library.save(rec)
             lastCompleted = rec

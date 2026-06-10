@@ -43,6 +43,16 @@ struct RecordingDetailView: View {
                                 .textSelection(.enabled)
                         }
                     }
+                    if !current.attendees.isEmpty {
+                        BraunCard(title: "Attendees") {
+                            attendeesBody
+                        }
+                    }
+                    if !current.topics.isEmpty {
+                        BraunCard(title: "Topics") {
+                            topicsBody
+                        }
+                    }
                     if !current.decisions.isEmpty {
                         BraunCard(title: "Decisions") {
                             decisionsBody
@@ -51,6 +61,16 @@ struct RecordingDetailView: View {
                     if !current.actionItems.isEmpty {
                         BraunCard(title: "Action items") {
                             actionItemsBody
+                        }
+                    }
+                    if !current.openQuestions.isEmpty {
+                        BraunCard(title: "Open questions") {
+                            openQuestionsBody
+                        }
+                    }
+                    if !current.keyDates.isEmpty {
+                        BraunCard(title: "Key dates") {
+                            keyDatesBody
                         }
                     }
                     if !current.segments.isEmpty {
@@ -197,6 +217,60 @@ struct RecordingDetailView: View {
     private var playbackFraction: Double {
         let total = max(player.duration, 0.01)
         return min(1, max(0, player.currentTime / total))
+    }
+
+    // MARK: - Attendees / Topics / Open questions / Key dates
+
+    private var attendeesBody: some View {
+        Text(current.attendees.joined(separator: " · "))
+            .braunBody()
+            .textSelection(.enabled)
+    }
+
+    private var topicsBody: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ForEach(current.topics) { topic in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(topic.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(BraunPalette.foreground)
+                    ForEach(topic.points, id: \.self) { point in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text("·").braunBody()
+                            Text(current.resolveSpeakerReferences(in: point))
+                                .braunBody()
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var openQuestionsBody: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(current.openQuestions, id: \.self) { q in
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("?").braunBody().foregroundStyle(BraunPalette.accent)
+                    Text(current.resolveSpeakerReferences(in: q))
+                        .braunBody()
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private var keyDatesBody: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(current.keyDates) { kd in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(kd.date).braunLabel(size: 10).foregroundStyle(BraunPalette.accent)
+                    Text(current.resolveSpeakerReferences(in: kd.context))
+                        .braunBody()
+                        .textSelection(.enabled)
+                }
+            }
+        }
     }
 
     // MARK: - Decisions / Action items

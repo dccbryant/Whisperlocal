@@ -52,6 +52,24 @@ enum RecordingExport {
             lines.append("")
         }
 
+        if !recording.attendees.isEmpty {
+            lines.append("────── ATTENDEES ──────")
+            lines.append(recording.attendees.joined(separator: ", "))
+            lines.append("")
+        }
+
+        if !recording.topics.isEmpty {
+            lines.append("────── TOPICS ──────")
+            for topic in recording.topics {
+                lines.append("")
+                lines.append(topic.title.uppercased())
+                for point in topic.points {
+                    lines.append("• \(recording.resolveSpeakerReferences(in: point))")
+                }
+            }
+            lines.append("")
+        }
+
         if !recording.decisions.isEmpty {
             lines.append("────── DECISIONS ──────")
             for d in recording.decisions {
@@ -69,6 +87,22 @@ enum RecordingExport {
                     line += " (by \(due))"
                 }
                 lines.append(line)
+            }
+            lines.append("")
+        }
+
+        if !recording.openQuestions.isEmpty {
+            lines.append("────── OPEN QUESTIONS ──────")
+            for q in recording.openQuestions {
+                lines.append("• \(recording.resolveSpeakerReferences(in: q))")
+            }
+            lines.append("")
+        }
+
+        if !recording.keyDates.isEmpty {
+            lines.append("────── KEY DATES ──────")
+            for kd in recording.keyDates {
+                lines.append("• \(kd.date) — \(recording.resolveSpeakerReferences(in: kd.context))")
             }
             lines.append("")
         }
