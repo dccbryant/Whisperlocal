@@ -153,6 +153,7 @@ struct AppleSummarizationService: SummarizationService {
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> MeetingExtraction {
         try ensureAvailable()
+        let analyzeStart = Date()
         let chunks = Self.chunk(text)
 
         // Single-chunk fast path: all three passes in parallel. Apple FM may serialize
@@ -165,7 +166,7 @@ struct AppleSummarizationService: SummarizationService {
             onProgress?(1.0)
             let topicsCapped = Array(Self.dedupeTopics(t).prefix(5))
             let actionsCapped = Array(Self.dedupe(a).prefix(4))
-            print("[Analyze] done (1 chunk parallel) — summary=\(s.count) chars, topics=\(topicsCapped.count), actions=\(actionsCapped.count) (raw \(a.count))")
+            print("[Analyze] done (1 chunk parallel, \(String(format: "%.1f", Date().timeIntervalSince(analyzeStart)))s) — summary=\(s.count) chars, topics=\(topicsCapped.count), actions=\(actionsCapped.count) (raw \(a.count))")
             return MeetingExtraction(summary: s, topics: topicsCapped, actionItems: actionsCapped)
         }
 
@@ -208,7 +209,7 @@ struct AppleSummarizationService: SummarizationService {
 
         let topics = Array(Self.dedupeTopics(topicAcc).prefix(5))
         let dedupedActions = Array(Self.dedupe(actAcc).prefix(4))
-        print("[Analyze] done (\(chunks.count) chunks parallel within) — summary=\(summary.count) chars, topics=\(topics.count), actions=\(dedupedActions.count) (raw \(actAcc.count))")
+        print("[Analyze] done (\(chunks.count) chunks parallel within, \(String(format: "%.1f", Date().timeIntervalSince(analyzeStart)))s) — summary=\(summary.count) chars, topics=\(topics.count), actions=\(dedupedActions.count) (raw \(actAcc.count))")
 
         return MeetingExtraction(
             summary: summary,
@@ -243,12 +244,13 @@ struct AppleSummarizationService: SummarizationService {
 
     func title(for text: String) async throws -> String {
         try ensureAvailable()
+        let titleStart = Date()
         // The title call fires right after analyze()'s burst of sessions. Without a beat
         // here it lands on the rate limiter (observed: title rate-limited while analyze
         // succeeded). A short pause lets the model drain before we ask for one more thing.
         await breathe()
         let snippet = String(text.prefix(4_000))
-        return try await withRetry("title") {
+        let result = try await withRetry("title") {
             let instructions = """
             You are a title generator. Output ONLY a short newspaper-headline title for the transcript.
 
@@ -262,6 +264,8 @@ struct AppleSummarizationService: SummarizationService {
             let response = try await session.respond(to: "Transcript:\n\(snippet)\n\nTitle:")
             return Self.cleanTitle(response.content)
         }
+        print("[Timing] title: \(String(format: "%.1f", Date().timeIntervalSince(titleStart)))s")
+        return result
     }
 
     // MARK: - Summary (hierarchical map-reduce)

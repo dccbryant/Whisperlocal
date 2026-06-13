@@ -59,6 +59,7 @@ actor DiarizingTranscriptionService: TranscriptionService {
     ) async throws -> [TranscriptSegment] {
         guard let whisper, let speakers else { throw ServiceError.notReady }
 
+        let stageStart = Date()
         let samples = try AudioFileReader.readMono16kFloats(at: url)
         guard !samples.isEmpty else { throw ServiceError.empty }
 
@@ -82,32 +83,43 @@ actor DiarizingTranscriptionService: TranscriptionService {
         }
 
         let diarization: DiarizationResult
+        let diarizeStart = Date()
         do {
             diarization = try await speakers.diarize(audioArray: samples)
         } catch {
             creepTask?.cancel()
             throw error
         }
+        let diarizeElapsed = Date().timeIntervalSince(diarizeStart)
         creepTask?.cancel()
         onProgress?(0.3)
 
         // No speakers detected → single-shot transcribe.
         if diarization.segments.isEmpty {
+            let whisperStart = Date()
             let results = try await whisper.transcribe(audioArray: samples)
+            let whisperElapsed = Date().timeIntervalSince(whisperStart)
             onProgress?(1.0)
             let text = results.map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { throw ServiceError.empty }
-            return [TranscriptSegment(speakerLabel: "Speaker 1", text: text, start: 0, end: Double(samples.count) / 16_000)]
+            let audioSeconds = Double(samples.count) / 16_000
+            print(String(format: "[Timing] transcribe (no diarization): audio=%.0fs, diarize=%.1fs, whisper=%.1fs (1 pass), stage=%.1fs",
+                         audioSeconds, diarizeElapsed, whisperElapsed, Date().timeIntervalSince(stageStart)))
+            return [TranscriptSegment(speakerLabel: "Speaker 1", text: text, start: 0, end: audioSeconds)]
         }
 
         var labelMap: [Int: Int] = [:]
         var nextLabel = 1
 
         var out: [TranscriptSegment] = []
+        var whisperTotal: TimeInterval = 0
+        var transcribedCount = 0
+        var skippedCount = 0
         let total = diarization.segments.count
         for (i, seg) in diarization.segments.enumerated() {
             // Need a single speaker ID for the segment; skip ambiguous segments.
             guard let speakerId = seg.speaker.speakerId else {
+                skippedCount += 1
                 onProgress?(0.3 + 0.7 * Double(i + 1) / Double(total))
                 continue
             }
@@ -124,16 +136,21 @@ actor DiarizingTranscriptionService: TranscriptionService {
             let startSample = max(0, Int(seg.startTime * 16_000))
             let endSample = min(samples.count, Int(seg.endTime * 16_000))
             guard endSample > startSample else {
+                skippedCount += 1
                 onProgress?(0.3 + 0.7 * Double(i + 1) / Double(total))
                 continue
             }
             if endSample - startSample < 3_200 {
+                skippedCount += 1
                 onProgress?(0.3 + 0.7 * Double(i + 1) / Double(total))
                 continue
             }
 
             let slice = Array(samples[startSample..<endSample])
+            let whisperStart = Date()
             let results = try await whisper.transcribe(audioArray: slice)
+            whisperTotal += Date().timeIntervalSince(whisperStart)
+            transcribedCount += 1
             let text = results.map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             onProgress?(0.3 + 0.7 * Double(i + 1) / Double(total))
             guard !text.isEmpty else { continue }
@@ -145,6 +162,12 @@ actor DiarizingTranscriptionService: TranscriptionService {
                 end: TimeInterval(seg.endTime)
             ))
         }
+
+        let audioSeconds = Double(samples.count) / 16_000
+        print(String(format: "[Timing] transcribe: audio=%.0fs, diarize=%.1fs, %d segs (%d transcribed, %d skipped), whisper=%.1fs total (avg %.2fs/seg), stage=%.1fs",
+                     audioSeconds, diarizeElapsed, total, transcribedCount, skippedCount,
+                     whisperTotal, transcribedCount > 0 ? whisperTotal / Double(transcribedCount) : 0,
+                     Date().timeIntervalSince(stageStart)))
 
         guard !out.isEmpty else { throw ServiceError.empty }
         return out
