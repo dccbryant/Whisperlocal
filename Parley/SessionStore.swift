@@ -25,6 +25,9 @@ final class SessionStore: ObservableObject {
     @Published var stageProgress: Double?
     /// The recording produced by the most recent record→process cycle. Cleared on next record.
     @Published var lastCompleted: Recording?
+    /// True while a re-summarize pass (triggered from the detail view) is running, so the UI
+    /// can show progress and prevent overlapping retries.
+    @Published var isResummarizing = false
 
     let recorder = AudioRecorder()
     let library: RecordingStore
@@ -133,20 +136,11 @@ final class SessionStore: ObservableObject {
             let title = try? await summarizer.title(for: transcriptText)
             stageProgress = 1.0
 
-            // If every Apple FM call came back empty, the on-device model was almost
-            // certainly transiently unavailable. Don't save a stub recording silently —
-            // surface .failed so the user gets a Try Again button.
-            let everythingFailed = extraction.summary.isEmpty
-                && extraction.topics.isEmpty
-                && extraction.actionItems.isEmpty
-                && title == nil
-            if everythingFailed {
-                try? FileManager.default.removeItem(at: url)
-                stageProgress = nil
-                stage = .failed("Apple Intelligence was busy. Tap Try Again — your recording can be re-imported.")
-                return
-            }
-
+            // Summarization may come back partly or fully empty — Apple Intelligence can
+            // rate-limit or refuse mid-pipeline, especially on long meetings. We do NOT
+            // discard in that case: transcription already succeeded and is expensive to
+            // redo. Save the recording with its transcript regardless; when the summary is
+            // missing, the detail view offers a "Generate summary" retry on the saved text.
             let filename = try library.ingestAudio(from: url)
             var rec = Recording(
                 id: UUID(),
@@ -190,6 +184,33 @@ final class SessionStore: ObservableObject {
             stageProgress = nil
             stage = .failed("Processing failed: \(error.localizedDescription)")
         }
+    }
+
+    /// Re-run summarization on an already-saved recording whose summary failed the first
+    /// time (e.g. Apple Intelligence was rate-limited mid-pipeline). Rebuilds the analyzer
+    /// input from the saved transcript — we never re-transcribe — and merges whatever comes
+    /// back into the stored recording. Safe to call repeatedly; existing good fields are
+    /// preserved if a retry only partially succeeds.
+    func resummarize(_ recording: Recording) async {
+        guard !isResummarizing else { return }
+        isResummarizing = true
+        defer { isResummarizing = false }
+
+        let transcriptText = recording.segments
+            .map { "\($0.speakerLabel): \($0.text)" }
+            .joined(separator: "\n")
+        guard !transcriptText.isEmpty else { return }
+
+        let extraction = (try? await summarizer.analyze(transcriptText, onProgress: nil)) ?? .empty
+        let newTitle = try? await summarizer.title(for: transcriptText)
+
+        // Re-read from the library in case it changed while we were working.
+        guard var rec = library.recordings.first(where: { $0.id == recording.id }) else { return }
+        if !extraction.summary.isEmpty { rec.summary = extraction.summary }
+        if !extraction.topics.isEmpty { rec.topics = extraction.topics }
+        if !extraction.actionItems.isEmpty { rec.actionItems = extraction.actionItems }
+        if (rec.title?.isEmpty ?? true), let newTitle, !newTitle.isEmpty { rec.title = newTitle }
+        library.save(rec)
     }
 
     func reset() {

@@ -4,6 +4,7 @@ struct RecordingDetailView: View {
     let recording: Recording
 
     @EnvironmentObject private var library: RecordingStore
+    @EnvironmentObject private var session: SessionStore
     @Environment(\.dismiss) private var dismiss
     @StateObject private var player = AudioPlayer()
     /// Current rename target. When `actionItemId` is nil, the rename targets a speaker label
@@ -41,6 +42,13 @@ struct RecordingDetailView: View {
                             Text(current.resolveSpeakerReferences(in: summary))
                                 .braunBody()
                                 .textSelection(.enabled)
+                        }
+                    } else if !current.segments.isEmpty {
+                        // Transcript exists but summarization didn't land (e.g. Apple
+                        // Intelligence was busy mid-pipeline). The recording was saved
+                        // rather than discarded; offer to retry on the saved transcript.
+                        BraunCard(title: "Summary") {
+                            summaryRetry
                         }
                     }
                     if !current.topics.isEmpty {
@@ -280,6 +288,32 @@ struct RecordingDetailView: View {
     }
 
     // MARK: - Audio staging
+
+    @ViewBuilder
+    private var summaryRetry: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Summarization didn't finish — Apple Intelligence was busy. Your transcript is saved.")
+                .braunBody()
+                .foregroundStyle(BraunPalette.secondary)
+            if session.isResummarizing {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Generating").braunLabel(size: 11)
+                }
+            } else {
+                Button {
+                    Task { await session.resummarize(current) }
+                } label: {
+                    Text("Generate summary")
+                        .braunLabel()
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Rectangle().stroke(BraunPalette.foreground, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
 
     private func stageAudio() async {
         // Clean any prior staging (e.g. user navigated between recordings).

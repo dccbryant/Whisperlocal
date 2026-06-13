@@ -156,32 +156,39 @@ struct AppleSummarizationService: SummarizationService {
         let analyzeStart = Date()
         let chunks = Self.chunk(text)
 
-        // Single-chunk fast path: all three passes in parallel. Apple FM may serialize
-        // internally, but if it doesn't this is a 2–3x win.
+        // Single-chunk path: run the three passes sequentially with a beat between each.
+        // Apple FM serializes internally anyway, so the old parallel `async let` bought no
+        // real speedup — it just fired a 3-session burst that tripped the on-device rate
+        // limiter (observed: long meetings failing with every pass empty). Paced-sequential
+        // keeps us comfortably under the limiter.
         if chunks.count == 1 {
-            async let summary = safeFinal(chunks[0])
-            async let topics = safeTopics(chunks[0])
-            async let actions = safeActions(chunks[0])
-            let (s, t, a) = await (summary, topics, actions)
+            let s = await safeFinal(chunks[0])
+            await breathe()
+            let t = await safeTopics(chunks[0])
+            await breathe()
+            let a = await safeActions(chunks[0])
             onProgress?(1.0)
             let topicsCapped = Array(Self.dedupeTopics(t).prefix(5))
             let actionsCapped = Array(Self.dedupe(a).prefix(4))
-            print("[Analyze] done (1 chunk parallel, \(String(format: "%.1f", Date().timeIntervalSince(analyzeStart)))s) — summary=\(s.count) chars, topics=\(topicsCapped.count), actions=\(actionsCapped.count) (raw \(a.count))")
+            print("[Analyze] done (1 chunk sequential, \(String(format: "%.1f", Date().timeIntervalSince(analyzeStart)))s) — summary=\(s.count) chars, topics=\(topicsCapped.count), actions=\(actionsCapped.count) (raw \(a.count))")
             return MeetingExtraction(summary: s, topics: topicsCapped, actionItems: actionsCapped)
         }
 
-        // Multi-chunk path: walk chunks sequentially, but each chunk's three passes run
-        // in parallel. Conservative: avoids slamming the on-device model with
-        // chunk-count × 3 concurrent sessions.
+        // Multi-chunk path: walk chunks sequentially AND run each chunk's three passes
+        // sequentially, with a beat between every call. On long meetings the old
+        // parallel-within-chunk burst (chunk-count × 3 concurrent sessions) reliably tripped
+        // the rate limiter until every pass came back empty — which discarded the whole
+        // meeting. Pacing each call fixes that; FM serializes internally so we lose ~nothing.
         var briefSummaries: [String] = []
         var topicAcc: [Topic] = []
         var actAcc: [ActionItem] = []
 
         for (i, chunk) in chunks.enumerated() {
-            async let bs = safeBrief(chunk)
-            async let tp = safeTopics(chunk)
-            async let ai = safeActions(chunk)
-            let (b, t, a) = await (bs, tp, ai)
+            let b = await safeBrief(chunk)
+            await breathe()
+            let t = await safeTopics(chunk)
+            await breathe()
+            let a = await safeActions(chunk)
             if !b.isEmpty { briefSummaries.append(b) }
             topicAcc.append(contentsOf: t)
             actAcc.append(contentsOf: a)
@@ -209,7 +216,7 @@ struct AppleSummarizationService: SummarizationService {
 
         let topics = Array(Self.dedupeTopics(topicAcc).prefix(5))
         let dedupedActions = Array(Self.dedupe(actAcc).prefix(4))
-        print("[Analyze] done (\(chunks.count) chunks parallel within, \(String(format: "%.1f", Date().timeIntervalSince(analyzeStart)))s) — summary=\(summary.count) chars, topics=\(topics.count), actions=\(dedupedActions.count) (raw \(actAcc.count))")
+        print("[Analyze] done (\(chunks.count) chunks sequential, \(String(format: "%.1f", Date().timeIntervalSince(analyzeStart)))s) — summary=\(summary.count) chars, topics=\(topics.count), actions=\(dedupedActions.count) (raw \(actAcc.count))")
 
         return MeetingExtraction(
             summary: summary,
@@ -218,7 +225,7 @@ struct AppleSummarizationService: SummarizationService {
         )
     }
 
-    // MARK: - Safe wrappers (so async let can compose cleanly)
+    // MARK: - Safe wrappers (swallow a failed pass → empty, so analyze never throws)
 
     private func safeBrief(_ chunk: String) async -> String {
         do { return try await withRetry("brief summary") { try await summarizeBrief(chunk) } }
