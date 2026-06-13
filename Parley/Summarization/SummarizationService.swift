@@ -191,30 +191,68 @@ struct AppleSummarizationService: SummarizationService {
         }
     }
 
-    // MARK: - Summary (per-chunk + reduce)
+    // MARK: - Summary (hierarchical map-reduce)
 
     private func summarize(_ chunks: [String]) async throws -> String {
+        // Single-chunk meetings go straight to the user-facing final summary.
         if chunks.count == 1 {
-            return try await summarizeChunk(chunks[0])
+            return try await summarizeFinal(chunks[0])
         }
+        // Map: each chunk produces a brief 1-2 sentence summary so the reduce input
+        // stays under the context window even when there are many chunks.
         var partials: [String] = []
         for chunk in chunks {
-            partials.append(try await summarizeChunk(chunk))
+            partials.append(try await summarizeBrief(chunk))
         }
-        return try await summarizeChunk(partials.joined(separator: "\n\n"))
+        // Reduce: if the joined partials still exceed our safe budget, run another
+        // brief-summarize pass. Repeat until the input fits. The bail-out check
+        // ensures we don't infinite-loop on a degenerate case where the brief
+        // pass doesn't actually compress.
+        var joined = partials.joined(separator: "\n\n")
+        var lastSize = Int.max
+        while joined.count > 3_500 && joined.count < lastSize {
+            lastSize = joined.count
+            let smallChunks = Self.chunk(joined, maxChars: 3_500)
+            var compressed: [String] = []
+            for sc in smallChunks {
+                compressed.append(try await summarizeBrief(sc))
+            }
+            joined = compressed.joined(separator: "\n\n")
+        }
+        return try await summarizeFinal(joined)
     }
 
-    private func summarizeChunk(_ text: String) async throws -> String {
+    /// Brief, intermediate summary — 1-2 sentences. Used in the map step and any
+    /// recursive reductions. NOT meant to be shown to the user.
+    private func summarizeBrief(_ text: String) async throws -> String {
         let instructions = """
-        You are a summarization assistant. You receive a transcript with lines like \
-        "Speaker 1: ...". You output ONLY a summary in 4 to 6 sentences, under 120 words.
+        Write a 1 to 2 sentence summary of this transcript chunk, under 40 words.
 
         Hard rules:
-        - Do NOT include the words "Speaker 1", "Speaker 2", or any speaker label.
-        - Do NOT quote, paraphrase line-by-line, or repeat sentences from the transcript.
+        - Do NOT include speaker labels.
+        - Do NOT quote.
+        - Plain prose, third person.
+        - If the chunk has no substantive content, respond with "(no content)".
+        """
+        let session = LanguageModelSession(instructions: instructions)
+        let response = try await session.respond(to: "Transcript:\n\(text)\n\nSummary:")
+        return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// User-facing summary — 4 to 6 sentences. Used for single-chunk meetings and as
+    /// the final reduce step on multi-chunk meetings.
+    private func summarizeFinal(_ text: String) async throws -> String {
+        let instructions = """
+        You are a summarization assistant. Output ONLY a single summary in 4 to 6 \
+        sentences, under 120 words.
+
+        Hard rules:
+        - Do NOT include speaker labels.
+        - Do NOT produce multiple paragraphs. One paragraph only.
+        - Do NOT quote.
         - Do NOT begin with "The transcript", "This is", "In this", or similar meta phrases.
-        - Write in plain prose, third person, describing the topic, decisions, and key facts.
-        - If the transcript is too short or contains no substantive content, respond with: \
+        - Plain prose, third person, describing the topic, decisions, and key facts.
+        - If the content is too short or contains nothing substantive, respond with: \
         "No meaningful content to summarize."
         """
         let session = LanguageModelSession(instructions: instructions)
@@ -347,11 +385,12 @@ struct AppleSummarizationService: SummarizationService {
 
     /// Split a transcript into chunks small enough to fit the on-device LLM context window
     /// alongside our instructions and the expected response. Apple's on-device model has a
-    /// hard 4096-token limit. With our instructions (~600 tokens) and expected output
-    /// (~600 tokens), the transcript chunk gets about 2900 tokens — call it 4000 chars
-    /// of English with comfortable safety margin. Earlier 8000-char chunks were tripping
-    /// `exceededContextWindowSize` errors on the topics and action items passes.
-    private static func chunk(_ text: String, maxChars: Int = 4_000) -> [String] {
+    /// hard 4096-token limit. Measured against the earlier `exceededContextWindowSize`
+    /// log (8000 chars produced 4091 tokens of total prompt), instructions + schema take
+    /// ~1100 tokens and transcript runs at ~0.3 tokens/char. 6000 chars keeps the full
+    /// prompt under ~3000 tokens — comfortable margin, ~33% fewer chunks than the
+    /// previous 4000-char setting and therefore ~33% less LLM time end-to-end.
+    private static func chunk(_ text: String, maxChars: Int = 6_000) -> [String] {
         if text.count <= maxChars { return [text] }
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         var chunks: [String] = []
