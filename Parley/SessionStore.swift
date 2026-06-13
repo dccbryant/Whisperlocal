@@ -124,15 +124,29 @@ final class SessionStore: ObservableObject {
 
             stage = .summarizing
             stageProgress = 0
-            // Budget within .summarizing: analyze() does the six sub-passes (summary,
-            // attendees, topics, decisions+actions, open questions, key dates) and gets
-            // 0…0.9 of the bar; title() rounds it out from 0.9 to 1.0.
+            // analyze() does the four sub-passes (summary, attendees, topics, action items)
+            // and gets 0…0.9 of the bar; title() rounds it out from 0.9 to 1.0.
             let extraction = (try? await summarizer.analyze(transcriptText) { [weak self] p in
                 Task { @MainActor [weak self] in self?.stageProgress = p * 0.9 }
             }) ?? .empty
             stageProgress = 0.9
             let title = try? await summarizer.title(for: transcriptText)
             stageProgress = 1.0
+
+            // If every Apple FM call came back empty, the on-device model was almost
+            // certainly transiently unavailable. Don't save a stub recording silently —
+            // surface .failed so the user gets a Try Again button.
+            let everythingFailed = extraction.summary.isEmpty
+                && extraction.attendees.isEmpty
+                && extraction.topics.isEmpty
+                && extraction.actionItems.isEmpty
+                && title == nil
+            if everythingFailed {
+                try? FileManager.default.removeItem(at: url)
+                stageProgress = nil
+                stage = .failed("Apple Intelligence was busy. Tap Try Again — your recording can be re-imported.")
+                return
+            }
 
             let filename = try library.ingestAudio(from: url)
             var rec = Recording(

@@ -99,6 +99,30 @@ struct AppleSummarizationService: SummarizationService {
 
     // MARK: - Orchestration
 
+    /// Call an Apple FM block, retry once on failure with a short delay. Apple's on-device
+    /// model occasionally throws transient errors under load; a second attempt almost
+    /// always succeeds. Logs both the original error and the retry outcome.
+    private func withRetry<T>(_ label: String, _ block: () async throws -> T) async throws -> T {
+        do {
+            return try await block()
+        } catch {
+            print("[Analyze] \(label) failed once, retrying after 500ms: \(error)")
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            do {
+                return try await block()
+            } catch {
+                print("[Analyze] \(label) failed twice, giving up: \(error)")
+                throw error
+            }
+        }
+    }
+
+    /// Sleep briefly between sub-pass calls so we don't slam the model with back-to-back
+    /// requests, which seems to correlate with the transient unavailability we've seen.
+    private func breathe() async {
+        try? await Task.sleep(nanoseconds: 200_000_000)
+    }
+
     func analyze(
         _ text: String,
         onProgress: (@Sendable (Double) -> Void)? = nil
@@ -113,45 +137,44 @@ struct AppleSummarizationService: SummarizationService {
         // 1. Summary
         let summary: String
         do {
-            summary = try await summarize(chunks)
+            summary = try await withRetry("summary") { try await summarize(chunks) }
         } catch {
-            print("[Analyze] summary failed: \(error)")
             summary = ""
         }
         onProgress?(1 / passes)
+        await breathe()
 
         // 2. Attendees
         var attendeeAcc: [String] = []
         for chunk in chunks {
             do {
-                attendeeAcc.append(contentsOf: try await extractAttendees(chunk))
-            } catch {
-                print("[Analyze] attendees failed on a chunk: \(error)")
-            }
+                let res = try await withRetry("attendees") { try await extractAttendees(chunk) }
+                attendeeAcc.append(contentsOf: res)
+            } catch { /* logged in withRetry */ }
         }
         let attendees = Self.dedupeNames(attendeeAcc)
         onProgress?(2 / passes)
+        await breathe()
 
         // 3. Topics
         var topicAcc: [Topic] = []
         for chunk in chunks {
             do {
-                topicAcc.append(contentsOf: try await extractTopics(chunk))
-            } catch {
-                print("[Analyze] topics failed on a chunk: \(error)")
-            }
+                let res = try await withRetry("topics") { try await extractTopics(chunk) }
+                topicAcc.append(contentsOf: res)
+            } catch { /* logged in withRetry */ }
         }
         let topics = Self.dedupeTopics(topicAcc)
         onProgress?(3 / passes)
+        await breathe()
 
         // 4. Action items
         var actAcc: [ActionItem] = []
         for chunk in chunks {
             do {
-                actAcc.append(contentsOf: try await extractActionItems(chunk))
-            } catch {
-                print("[Analyze] action items failed on a chunk: \(error)")
-            }
+                let res = try await withRetry("action items") { try await extractActionItems(chunk) }
+                actAcc.append(contentsOf: res)
+            } catch { /* logged in withRetry */ }
         }
         onProgress?(1.0)
 
@@ -171,18 +194,20 @@ struct AppleSummarizationService: SummarizationService {
     func title(for text: String) async throws -> String {
         try ensureAvailable()
         let snippet = String(text.prefix(4_000))
-        let instructions = """
-        You are a title generator. Output ONLY a short newspaper-headline title for the transcript.
+        return try await withRetry("title") {
+            let instructions = """
+            You are a title generator. Output ONLY a short newspaper-headline title for the transcript.
 
-        Hard rules:
-        - 3 to 5 words.
-        - No quotation marks, no markdown, no leading "Title:" prefix.
-        - Capture the topic only (e.g. "Q3 sales planning", "Voice memo about groceries").
-        - Output the title and nothing else.
-        """
-        let session = LanguageModelSession(instructions: instructions)
-        let response = try await session.respond(to: "Transcript:\n\(snippet)\n\nTitle:")
-        return Self.cleanTitle(response.content)
+            Hard rules:
+            - 3 to 5 words.
+            - No quotation marks, no markdown, no leading "Title:" prefix.
+            - Capture the topic only (e.g. "Q3 sales planning", "Voice memo about groceries").
+            - Output the title and nothing else.
+            """
+            let session = LanguageModelSession(instructions: instructions)
+            let response = try await session.respond(to: "Transcript:\n\(snippet)\n\nTitle:")
+            return Self.cleanTitle(response.content)
+        }
     }
 
     // MARK: - Summary (per-chunk + reduce)
