@@ -122,52 +122,88 @@ struct AppleSummarizationService: SummarizationService {
         try ensureAvailable()
         let chunks = Self.chunk(text)
 
-        // Three sub-passes: summary, topics, action items. Each is independently fallible;
-        // a failure in Topics doesn't tank Summary.
-        let passes: Double = 3
-
-        // 1. Summary
-        let summary: String
-        do {
-            summary = try await withRetry("summary") { try await summarize(chunks) }
-        } catch {
-            summary = ""
+        // Single-chunk fast path: all three passes in parallel. Apple FM may serialize
+        // internally, but if it doesn't this is a 2–3x win.
+        if chunks.count == 1 {
+            async let summary = safeFinal(chunks[0])
+            async let topics = safeTopics(chunks[0])
+            async let actions = safeActions(chunks[0])
+            let (s, t, a) = await (summary, topics, actions)
+            onProgress?(1.0)
+            let topicsCapped = Array(Self.dedupeTopics(t).prefix(5))
+            let actionsCapped = Array(Self.dedupe(a).prefix(4))
+            print("[Analyze] done (1 chunk parallel) — summary=\(s.count) chars, topics=\(topicsCapped.count), actions=\(actionsCapped.count) (raw \(a.count))")
+            return MeetingExtraction(summary: s, topics: topicsCapped, actionItems: actionsCapped)
         }
-        onProgress?(1 / passes)
-        await breathe()
 
-        // 2. Topics
+        // Multi-chunk path: walk chunks sequentially, but each chunk's three passes run
+        // in parallel. Conservative: avoids slamming the on-device model with
+        // chunk-count × 3 concurrent sessions.
+        var briefSummaries: [String] = []
         var topicAcc: [Topic] = []
-        for chunk in chunks {
-            do {
-                let res = try await withRetry("topics") { try await extractTopics(chunk) }
-                topicAcc.append(contentsOf: res)
-            } catch { /* logged in withRetry */ }
-        }
-        let topics = Array(Self.dedupeTopics(topicAcc).prefix(5))
-        onProgress?(2 / passes)
-        await breathe()
-
-        // 3. Action items
         var actAcc: [ActionItem] = []
-        for chunk in chunks {
-            do {
-                let res = try await withRetry("action items") { try await extractActionItems(chunk) }
-                actAcc.append(contentsOf: res)
-            } catch { /* logged in withRetry */ }
+
+        for (i, chunk) in chunks.enumerated() {
+            async let bs = safeBrief(chunk)
+            async let tp = safeTopics(chunk)
+            async let ai = safeActions(chunk)
+            let (b, t, a) = await (bs, tp, ai)
+            if !b.isEmpty { briefSummaries.append(b) }
+            topicAcc.append(contentsOf: t)
+            actAcc.append(contentsOf: a)
+            // Per-chunk progress: leave a slice at the end for the final summary reduce.
+            onProgress?(0.9 * Double(i + 1) / Double(chunks.count))
+            await breathe()
         }
+
+        // Reduce briefs into a single user-facing summary. Hierarchical: if joined
+        // briefs still exceed the chunk budget, brief-summarize them again before the
+        // final pass.
+        var joined = briefSummaries.joined(separator: "\n\n")
+        var lastSize = Int.max
+        while joined.count > 3_500 && joined.count < lastSize {
+            lastSize = joined.count
+            let smallChunks = Self.chunk(joined, maxChars: 3_500)
+            var compressed: [String] = []
+            for sc in smallChunks {
+                compressed.append(await safeBrief(sc))
+            }
+            joined = compressed.joined(separator: "\n\n")
+        }
+        let summary = joined.isEmpty ? "" : await safeFinal(joined)
         onProgress?(1.0)
 
-        // Dedupe then hard-cap. Even after dedupe the small model is overgenerous, so a
-        // total ceiling of 4 keeps the list focused on the most important commitments.
+        let topics = Array(Self.dedupeTopics(topicAcc).prefix(5))
         let dedupedActions = Array(Self.dedupe(actAcc).prefix(4))
-        print("[Analyze] done — summary=\(summary.count) chars, topics=\(topics.count), actions=\(dedupedActions.count) (raw \(actAcc.count))")
+        print("[Analyze] done (\(chunks.count) chunks parallel within) — summary=\(summary.count) chars, topics=\(topics.count), actions=\(dedupedActions.count) (raw \(actAcc.count))")
 
         return MeetingExtraction(
             summary: summary,
             topics: topics,
             actionItems: dedupedActions
         )
+    }
+
+    // MARK: - Safe wrappers (so async let can compose cleanly)
+
+    private func safeBrief(_ chunk: String) async -> String {
+        do { return try await withRetry("brief summary") { try await summarizeBrief(chunk) } }
+        catch { return "" }
+    }
+
+    private func safeFinal(_ chunk: String) async -> String {
+        do { return try await withRetry("final summary") { try await summarizeFinal(chunk) } }
+        catch { return "" }
+    }
+
+    private func safeTopics(_ chunk: String) async -> [Topic] {
+        do { return try await withRetry("topics") { try await extractTopics(chunk) } }
+        catch { return [] }
+    }
+
+    private func safeActions(_ chunk: String) async -> [ActionItem] {
+        do { return try await withRetry("action items") { try await extractActionItems(chunk) } }
+        catch { return [] }
     }
 
     // MARK: - Title
