@@ -134,56 +134,82 @@ struct AppleSummarizationService: SummarizationService {
         try ensureAvailable()
         let chunks = Self.chunk(text)
 
-        // Six sub-passes. We report progress at boundaries.
+        // Six sub-passes. Each one is independently fallible: a failure in (say) Topics
+        // shouldn't tank the Summary. We swallow errors per sub-pass and accumulate
+        // whatever sections succeeded; the result is partial, not empty.
         let passes: Double = 6
 
-        // 1. Summary (multi-chunk map-reduce when needed)
-        let summary = try await summarize(chunks)
+        // 1. Summary
+        let summary: String
+        do {
+            summary = try await summarize(chunks)
+        } catch {
+            print("[Analyze] summary failed: \(error)")
+            summary = ""
+        }
         onProgress?(1 / passes)
 
-        // 2. Attendees — union across chunks, dedupe by lowercased name
+        // 2. Attendees
         var attendeeAcc: [String] = []
         for chunk in chunks {
-            let res = try await extractAttendees(chunk)
-            attendeeAcc.append(contentsOf: res)
+            do {
+                attendeeAcc.append(contentsOf: try await extractAttendees(chunk))
+            } catch {
+                print("[Analyze] attendees failed on a chunk: \(error)")
+            }
         }
         let attendees = Self.dedupeNames(attendeeAcc)
         onProgress?(2 / passes)
 
-        // 3. Topics — union, fuzzy-dedupe by title
+        // 3. Topics
         var topicAcc: [Topic] = []
         for chunk in chunks {
-            let res = try await extractTopics(chunk)
-            topicAcc.append(contentsOf: res)
+            do {
+                topicAcc.append(contentsOf: try await extractTopics(chunk))
+            } catch {
+                print("[Analyze] topics failed on a chunk: \(error)")
+            }
         }
         let topics = Self.dedupeTopics(topicAcc)
         onProgress?(3 / passes)
 
-        // 4. Decisions + action items (existing structured extraction)
+        // 4. Decisions + action items
         var decAcc: [String] = []
         var actAcc: [ActionItem] = []
         for chunk in chunks {
-            let e = try await extractDecisionsAndActions(chunk)
-            decAcc.append(contentsOf: e.decisions)
-            actAcc.append(contentsOf: e.actionItems)
+            do {
+                let e = try await extractDecisionsAndActions(chunk)
+                decAcc.append(contentsOf: e.decisions)
+                actAcc.append(contentsOf: e.actionItems)
+            } catch {
+                print("[Analyze] decisions/actions failed on a chunk: \(error)")
+            }
         }
         onProgress?(4 / passes)
 
         // 5. Open questions
         var qAcc: [String] = []
         for chunk in chunks {
-            let res = try await extractOpenQuestions(chunk)
-            qAcc.append(contentsOf: res)
+            do {
+                qAcc.append(contentsOf: try await extractOpenQuestions(chunk))
+            } catch {
+                print("[Analyze] open questions failed on a chunk: \(error)")
+            }
         }
         onProgress?(5 / passes)
 
         // 6. Key dates
         var dAcc: [KeyDate] = []
         for chunk in chunks {
-            let res = try await extractKeyDates(chunk)
-            dAcc.append(contentsOf: res)
+            do {
+                dAcc.append(contentsOf: try await extractKeyDates(chunk))
+            } catch {
+                print("[Analyze] key dates failed on a chunk: \(error)")
+            }
         }
         onProgress?(1.0)
+
+        print("[Analyze] done — summary=\(summary.count) chars, attendees=\(attendees.count), topics=\(topics.count), decisions=\(decAcc.count), actions=\(actAcc.count), questions=\(qAcc.count), dates=\(dAcc.count)")
 
         return MeetingExtraction(
             summary: summary,
