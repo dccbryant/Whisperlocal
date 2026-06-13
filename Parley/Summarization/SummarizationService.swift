@@ -221,42 +221,90 @@ struct AppleSummarizationService: SummarizationService {
     private func extractActionItems(_ text: String) async throws -> [ActionItem] {
         let instructions = """
         Extract action items. STRICT RULE: include ONLY action items where the speaker \
-        gave a specific deadline or date. No deadline → skip the item entirely.
+        gave a CONCRETE, SPECIFIC deadline.
 
-        Examples to include:
-        - "I'll send the contract by Friday" → due "Friday"
-        - "Can you finish this before the launch?" → "Yes" → due "before the launch"
-        - "Let me circle back next Tuesday" → due "next Tuesday"
+        A concrete deadline names a specific day, date, week, month, quarter, year, or event:
+        - "by Friday" ✓
+        - "next Tuesday" ✓
+        - "before July 1st" ✓
+        - "end of Q3" ✓
+        - "by the launch" ✓
+        - "next week" ✓
 
-        Examples to SKIP (no deadline → drop these):
-        - "I'll handle that" (no when)
-        - "Can you take care of this?" → "Sure" (no when)
-        - "We should probably look at this" (vague + no when)
+        FORBIDDEN — these are NOT deadlines, skip the item entirely:
+        - "soon" / "shortly" / "eventually" / "later"
+        - "immediately" / "ASAP" / "as soon as possible"
+        - "no time mentioned" / "no deadline" / "TBD" / "to be determined"
+        - "when ready" / "when possible" / "when they come through"
+        - "ongoing" / "continuously"
 
-        At most 5 per chunk. Quality over quantity.
+        At most 5 action items per chunk. Quality over quantity.
 
         For each item kept:
         - assignee: speaker label ("Speaker 1", "Speaker 2", ...) of whoever accepted it. \
         Use "Unassigned" only when no specific speaker took it on.
         - task: one short imperative sentence.
-        - dueDate: the time reference exactly as stated. MUST be non-empty.
+        - dueDate: the concrete time reference exactly as stated. MUST name a specific time. \
+        If you cannot give a specific deadline, SKIP THE ITEM. Do NOT fill in "soon" or \
+        "no time mentioned" or any other placeholder.
 
-        Empty array is valid. Do NOT invent items or deadlines.
+        Empty array is the correct answer when no items have concrete deadlines. Do NOT \
+        invent items or deadlines.
         """
         let session = LanguageModelSession(instructions: instructions)
         let response = try await session.respond(to: "Transcript:\n\(text)",
                                                  generating: GenerableActionItems.self)
         return response.content.actionItems.compactMap { gi -> ActionItem? in
             let due = gi.dueDate.trimmingCharacters(in: .whitespacesAndNewlines)
-            // Belt-and-braces post-filter: enforce the deadline requirement client-side
-            // in case the model slipped one in without a date despite the instructions.
-            guard !due.isEmpty else { return nil }
+            // Belt-and-braces: even with the prompt, the small on-device model sometimes
+            // slips placeholder strings like "soon" or "no time mentioned" in to bypass
+            // the rule. Filter those out here.
+            guard !due.isEmpty, Self.isConcreteDeadline(due) else { return nil }
             return ActionItem(
                 assignee: gi.assignee.trimmingCharacters(in: .whitespacesAndNewlines),
                 task: gi.task.trimmingCharacters(in: .whitespacesAndNewlines),
                 dueDate: due
             )
         }
+    }
+
+    /// Phrases the model uses to pretend it has a deadline. Reject any due-date string that
+    /// is, or starts with, or ends with, any of these (case-insensitive). Tweakable list.
+    private static let placeholderDueDates: Set<String> = [
+        "soon", "shortly", "eventually", "later", "immediately", "asap",
+        "as soon as possible", "right away",
+        "no time mentioned", "no time specified", "no time", "no deadline",
+        "no date", "not specified", "not mentioned", "unspecified", "undefined",
+        "tbd", "to be determined", "to be decided",
+        "when ready", "when possible", "when they come through",
+        "ongoing", "continuously", "n/a", "none", "any time", "anytime",
+    ]
+
+    /// True if a due-date string looks like a real deadline rather than a placeholder.
+    private static func isConcreteDeadline(_ raw: String) -> Bool {
+        let lowered = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if lowered.isEmpty { return false }
+        // Exact placeholder match → reject.
+        if placeholderDueDates.contains(lowered) { return false }
+        // "as soon as possible we can…" / "soon, before the launch" — strip leading/trailing
+        // filler and check what's left has real content. Simple heuristic: at least one of
+        // these substrings (day names, month names, period words, numbers).
+        let concreteMarkers = [
+            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+            "january", "february", "march", "april", "may", "june", "july", "august",
+            "september", "october", "november", "december",
+            "week", "month", "quarter", "year", "day", "tomorrow", "tonight",
+            "morning", "afternoon", "evening",
+            "launch", "release", "deadline", "meeting", "deliver",
+            "end of", "beginning of", "mid-", "early", "late",
+            "q1", "q2", "q3", "q4",
+        ]
+        for marker in concreteMarkers where lowered.contains(marker) { return true }
+        // A digit in the string (e.g. "July 1st", "by the 15th") is also a strong signal.
+        if lowered.unicodeScalars.contains(where: { CharacterSet.decimalDigits.contains($0) }) {
+            return true
+        }
+        return false
     }
 
     private func extractAttendees(_ text: String) async throws -> [String] {
