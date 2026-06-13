@@ -17,10 +17,14 @@ protocol TranscriptionService {
 /// Pipeline:
 ///   1. AudioFileReader → [Float] at 16 kHz mono.
 ///   2. SpeakerKit.diarize(...) → SpeakerSegment list (start/end + speaker ID).
-///   3. For each segment, slice the [Float] and run WhisperKit.transcribe(audioArray:).
-///   4. Produce TranscriptSegment list with friendly "Speaker N" labels.
+///   3. ONE WhisperKit.transcribe(audioArray:) pass over the full audio → timestamped
+///      segments. (Slicing per speaker-turn and transcribing each slice paid ~5s of fixed
+///      per-call overhead every time — hundreds of calls on a long meeting; one pass pays
+///      it once.)
+///   4. Assign each Whisper segment a speaker by max timestamp-overlap with the diarization
+///      ranges, then group consecutive same-speaker segments into "Speaker N" turns.
 ///
-/// If diarization fails or finds nothing, falls back to a single full-audio transcription.
+/// If diarization finds nothing, falls back to a single untagged full-audio transcription.
 actor DiarizingTranscriptionService: TranscriptionService {
     enum ServiceError: Error, LocalizedError {
         case notReady
@@ -108,65 +112,110 @@ actor DiarizingTranscriptionService: TranscriptionService {
             return [TranscriptSegment(speakerLabel: "Speaker 1", text: text, start: 0, end: audioSeconds)]
         }
 
+        // Transcribe the whole audio in ONE pass. Whisper has no incremental progress hook
+        // here, so creep the bar from 0.3 toward 0.85 while it runs, then snap to 0.9.
+        let transcribeCreep: Task<Void, Never>? = onProgress.map { cb in
+            Task {
+                var elapsed: Double = 0
+                while !Task.isCancelled {
+                    do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
+                    elapsed += 1
+                    cb(0.3 + 0.55 * (1 - exp(-elapsed / 60)))
+                }
+            }
+        }
+        let whisperStart = Date()
+        let results: [TranscriptionResult]
+        do {
+            results = try await whisper.transcribe(audioArray: samples)
+        } catch {
+            transcribeCreep?.cancel()
+            throw error
+        }
+        transcribeCreep?.cancel()
+        let whisperElapsed = Date().timeIntervalSince(whisperStart)
+        onProgress?(0.9)
+
+        // Whisper's timestamped segments (start/end in seconds), in chronological order.
+        let whisperSegments = results.flatMap { $0.segments }
+
+        // Dense 1-based speaker labels in first-appearance (time) order. SpeakerKit cluster
+        // IDs can be sparse (0, 3, 7); remap them to Speaker 1, 2, 3 …
         var labelMap: [Int: Int] = [:]
         var nextLabel = 1
-
-        var out: [TranscriptSegment] = []
-        var whisperTotal: TimeInterval = 0
-        var transcribedCount = 0
-        var skippedCount = 0
-        let total = diarization.segments.count
-        for (i, seg) in diarization.segments.enumerated() {
-            // Need a single speaker ID for the segment; skip ambiguous segments.
-            guard let speakerId = seg.speaker.speakerId else {
-                skippedCount += 1
-                onProgress?(0.3 + 0.7 * Double(i + 1) / Double(total))
-                continue
-            }
-
-            let label: Int
-            if let existing = labelMap[speakerId] {
-                label = existing
-            } else {
-                label = nextLabel
-                labelMap[speakerId] = nextLabel
+        for seg in diarization.segments {
+            guard let sid = seg.speaker.speakerId else { continue }
+            if labelMap[sid] == nil {
+                labelMap[sid] = nextLabel
                 nextLabel += 1
             }
+        }
 
-            let startSample = max(0, Int(seg.startTime * 16_000))
-            let endSample = min(samples.count, Int(seg.endTime * 16_000))
-            guard endSample > startSample else {
-                skippedCount += 1
-                onProgress?(0.3 + 0.7 * Double(i + 1) / Double(total))
-                continue
+        // The speaker label for a Whisper segment's time span: the diarization speaker it
+        // overlaps most. If it lands in a diarization gap (no overlap), fall back to the
+        // nearest diarization range in time.
+        func speakerLabel(forStart s: Double, end e: Double) -> Int? {
+            var bestLabel: Int?
+            var bestOverlap = 0.0
+            var nearestLabel: Int?
+            var nearestGap = Double.greatestFiniteMagnitude
+            for seg in diarization.segments {
+                guard let sid = seg.speaker.speakerId, let label = labelMap[sid] else { continue }
+                let segStart = Double(seg.startTime)
+                let segEnd = Double(seg.endTime)
+                let overlap = min(e, segEnd) - max(s, segStart)
+                if overlap > bestOverlap {
+                    bestOverlap = overlap
+                    bestLabel = label
+                }
+                let gap = e < segStart ? segStart - e : (s > segEnd ? s - segEnd : 0)
+                if gap < nearestGap {
+                    nearestGap = gap
+                    nearestLabel = label
+                }
             }
-            if endSample - startSample < 3_200 {
-                skippedCount += 1
-                onProgress?(0.3 + 0.7 * Double(i + 1) / Double(total))
-                continue
-            }
+            return bestLabel ?? nearestLabel
+        }
 
-            let slice = Array(samples[startSample..<endSample])
-            let whisperStart = Date()
-            let results = try await whisper.transcribe(audioArray: slice)
-            whisperTotal += Date().timeIntervalSince(whisperStart)
-            transcribedCount += 1
-            let text = results.map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-            onProgress?(0.3 + 0.7 * Double(i + 1) / Double(total))
-            guard !text.isEmpty else { continue }
-
+        // Walk segments in order, merging consecutive same-speaker ones into one turn.
+        var out: [TranscriptSegment] = []
+        var curLabel: Int?
+        var curText = ""
+        var curStart = 0.0
+        var curEnd = 0.0
+        func flush() {
+            let text = curText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let label = curLabel, !text.isEmpty else { return }
             out.append(TranscriptSegment(
                 speakerLabel: "Speaker \(label)",
                 text: text,
-                start: TimeInterval(seg.startTime),
-                end: TimeInterval(seg.endTime)
+                start: curStart,
+                end: curEnd
             ))
         }
+        for ws in whisperSegments {
+            let segStart = Double(ws.start)
+            let segEnd = Double(ws.end)
+            let label = speakerLabel(forStart: segStart, end: segEnd)
+            if label != curLabel {
+                flush()
+                curLabel = label
+                curText = ws.text
+                curStart = segStart
+                curEnd = segEnd
+            } else {
+                curText += ws.text
+                curEnd = segEnd
+            }
+        }
+        flush()
+
+        onProgress?(1.0)
 
         let audioSeconds = Double(samples.count) / 16_000
-        print(String(format: "[Timing] transcribe: audio=%.0fs, diarize=%.1fs, %d segs (%d transcribed, %d skipped), whisper=%.1fs total (avg %.2fs/seg), stage=%.1fs",
-                     audioSeconds, diarizeElapsed, total, transcribedCount, skippedCount,
-                     whisperTotal, transcribedCount > 0 ? whisperTotal / Double(transcribedCount) : 0,
+        print(String(format: "[Timing] transcribe: audio=%.0fs, diarize=%.1fs, whisper=%.1fs (1 pass), %d whisper segs → %d turns, %d speakers, stage=%.1fs",
+                     audioSeconds, diarizeElapsed, whisperElapsed,
+                     whisperSegments.count, out.count, labelMap.count,
                      Date().timeIntervalSince(stageStart)))
 
         guard !out.isEmpty else { throw ServiceError.empty }
