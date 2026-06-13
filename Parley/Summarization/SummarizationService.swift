@@ -220,37 +220,41 @@ struct AppleSummarizationService: SummarizationService {
 
     private func extractActionItems(_ text: String) async throws -> [ActionItem] {
         let instructions = """
-        Extract action items that someone EXPLICITLY committed to. Be strict — quality \
-        over quantity. At most 5 per chunk.
+        Extract action items. STRICT RULE: include ONLY action items where the speaker \
+        gave a specific deadline or date. No deadline → skip the item entirely.
 
-        Include ONLY when someone clearly took on a task:
-        - "I'll handle X" / "I'll send Y" / "I'll set up Z"
-        - "Can you do X?" → "Yes / OK / Will do" exchange
-        - "We agreed Sarah will X"
+        Examples to include:
+        - "I'll send the contract by Friday" → due "Friday"
+        - "Can you finish this before the launch?" → "Yes" → due "before the launch"
+        - "Let me circle back next Tuesday" → due "next Tuesday"
 
-        EXCLUDE:
-        - Vague intentions ("we should probably look at...")
-        - Speculations ("maybe we could...")
-        - Things discussed but no one accepted
-        - Generic next steps not assigned to anyone specific
+        Examples to SKIP (no deadline → drop these):
+        - "I'll handle that" (no when)
+        - "Can you take care of this?" → "Sure" (no when)
+        - "We should probably look at this" (vague + no when)
 
-        For each action item:
+        At most 5 per chunk. Quality over quantity.
+
+        For each item kept:
         - assignee: speaker label ("Speaker 1", "Speaker 2", ...) of whoever accepted it. \
         Use "Unassigned" only when no specific speaker took it on.
         - task: one short imperative sentence.
-        - dueDate: only if a time was actually stated. Empty string otherwise.
+        - dueDate: the time reference exactly as stated. MUST be non-empty.
 
-        If nothing meets the bar, return an empty array. Do NOT invent.
+        Empty array is valid. Do NOT invent items or deadlines.
         """
         let session = LanguageModelSession(instructions: instructions)
         let response = try await session.respond(to: "Transcript:\n\(text)",
                                                  generating: GenerableActionItems.self)
-        return response.content.actionItems.map { gi -> ActionItem in
+        return response.content.actionItems.compactMap { gi -> ActionItem? in
             let due = gi.dueDate.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Belt-and-braces post-filter: enforce the deadline requirement client-side
+            // in case the model slipped one in without a date despite the instructions.
+            guard !due.isEmpty else { return nil }
             return ActionItem(
                 assignee: gi.assignee.trimmingCharacters(in: .whitespacesAndNewlines),
                 task: gi.task.trimmingCharacters(in: .whitespacesAndNewlines),
-                dueDate: due.isEmpty ? nil : due
+                dueDate: due
             )
         }
     }
@@ -381,14 +385,23 @@ struct AppleSummarizationService: SummarizationService {
         var out: [ActionItem] = []
         for item in items {
             let normTask = normalize(item.task)
-            let assignee = item.assignee.lowercased()
             if let idx = out.firstIndex(where: {
-                guard $0.assignee.lowercased() == assignee else { return false }
                 let other = normalize($0.task)
+                if other == normTask { return true }
                 if roughlyEqual(other, normTask) { return true }
-                return wordOverlapRatio(other, normTask) >= 0.6
+                // Lower threshold + ignore-assignee match: catches rewordings AND cases
+                // where the model attributed the same commitment to different speakers
+                // across chunks.
+                return wordOverlapRatio(other, normTask) >= 0.45
             }) {
-                if item.task.count > out[idx].task.count { out[idx] = item }
+                // Prefer the longer task wording; if the kept one was Unassigned and the
+                // duplicate names a specific speaker, take the named one.
+                let existing = out[idx]
+                let existingUnassigned = existing.assignee.lowercased() == "unassigned"
+                let newNamed = item.assignee.lowercased() != "unassigned"
+                if item.task.count > existing.task.count || (existingUnassigned && newNamed) {
+                    out[idx] = item
+                }
             } else {
                 out.append(item)
             }
