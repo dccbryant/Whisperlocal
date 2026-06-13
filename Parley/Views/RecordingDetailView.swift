@@ -53,19 +53,9 @@ struct RecordingDetailView: View {
                             topicsBody
                         }
                     }
-                    if !current.decisions.isEmpty {
-                        BraunCard(title: "Decisions") {
-                            decisionsBody
-                        }
-                    }
                     if !current.actionItems.isEmpty {
                         BraunCard(title: "Action items") {
                             actionItemsBody
-                        }
-                    }
-                    if !current.openQuestions.isEmpty {
-                        BraunCard(title: "Open questions") {
-                            openQuestionsBody
                         }
                     }
                     if !current.keyDates.isEmpty {
@@ -219,7 +209,7 @@ struct RecordingDetailView: View {
         return min(1, max(0, player.currentTime / total))
     }
 
-    // MARK: - Attendees / Topics / Open questions / Key dates
+    // MARK: - Attendees / Topics / Key dates
 
     private var attendeesBody: some View {
         Text(current.attendees.joined(separator: " · "))
@@ -247,19 +237,6 @@ struct RecordingDetailView: View {
         }
     }
 
-    private var openQuestionsBody: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(current.openQuestions, id: \.self) { q in
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text("?").braunBody().foregroundStyle(BraunPalette.accent)
-                    Text(current.resolveSpeakerReferences(in: q))
-                        .braunBody()
-                        .textSelection(.enabled)
-                }
-            }
-        }
-    }
-
     private var keyDatesBody: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(current.keyDates) { kd in
@@ -273,20 +250,7 @@ struct RecordingDetailView: View {
         }
     }
 
-    // MARK: - Decisions / Action items
-
-    private var decisionsBody: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(current.decisions, id: \.self) { d in
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text("·").braunBody()
-                    Text(current.resolveSpeakerReferences(in: d))
-                        .braunBody()
-                        .textSelection(.enabled)
-                }
-            }
-        }
-    }
+    // MARK: - Action items
 
     private var actionItemsBody: some View {
         VStack(alignment: .leading, spacing: 12) {

@@ -160,10 +160,12 @@ final class SessionStore: ObservableObject {
             rec.title = title
             rec.attendees = extraction.attendees
             rec.topics = extraction.topics
-            rec.decisions = extraction.decisions
             rec.actionItems = extraction.actionItems
-            rec.openQuestions = extraction.openQuestions
             rec.keyDates = extraction.keyDates
+            // Decisions and open questions were removed in 0.2.2 — new recordings won't
+            // populate either field. Older recordings keep whatever they already had.
+            rec.decisions = []
+            rec.openQuestions = []
 
             library.save(rec)
             lastCompleted = rec

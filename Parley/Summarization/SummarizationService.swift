@@ -9,18 +9,14 @@ struct MeetingExtraction: Hashable {
     let summary: String
     let attendees: [String]
     let topics: [Topic]
-    let decisions: [String]
     let actionItems: [ActionItem]
-    let openQuestions: [String]
     let keyDates: [KeyDate]
 
     static let empty = MeetingExtraction(
         summary: "",
         attendees: [],
         topics: [],
-        decisions: [],
         actionItems: [],
-        openQuestions: [],
         keyDates: []
     )
 }
@@ -68,10 +64,8 @@ struct AppleSummarizationService: SummarizationService {
     // MARK: - Generable mirror types
 
     @Generable
-    struct GenerableExtraction {
-        @Guide(description: "Concrete decisions reached in the meeting. Each is one short sentence. Empty if nothing was decided.")
-        let decisions: [String]
-        @Guide(description: "Concrete next-step tasks that someone needs to do.")
+    struct GenerableActionItems {
+        @Guide(description: "Action items that someone explicitly committed to. At most 5 in any single chunk. Quality over quantity — only include clear commitments.")
         let actionItems: [GenerableActionItem]
     }
 
@@ -93,7 +87,7 @@ struct AppleSummarizationService: SummarizationService {
 
     @Generable
     struct GenerableTopics {
-        @Guide(description: "5 to 10 main topics discussed in the conversation, in the order they came up.")
+        @Guide(description: "3 to 5 main topics discussed. Only the most substantial topics — not minor side comments.")
         let topics: [GenerableTopic]
     }
 
@@ -101,14 +95,8 @@ struct AppleSummarizationService: SummarizationService {
     struct GenerableTopic {
         @Guide(description: "Short label for the topic, 3 to 6 words. No leading numbering.")
         let title: String
-        @Guide(description: "2 to 4 short sentences expanding on what was said about this topic. Each is a complete sentence.")
+        @Guide(description: "2 to 3 short sentences expanding on what was said about this topic. Each is a complete sentence.")
         let points: [String]
-    }
-
-    @Generable
-    struct GenerableOpenQuestions {
-        @Guide(description: "Questions raised in the conversation that were left unresolved. Include only genuine open questions, not rhetorical ones. Empty array if none.")
-        let questions: [String]
     }
 
     @Generable
@@ -134,10 +122,9 @@ struct AppleSummarizationService: SummarizationService {
         try ensureAvailable()
         let chunks = Self.chunk(text)
 
-        // Six sub-passes. Each one is independently fallible: a failure in (say) Topics
-        // shouldn't tank the Summary. We swallow errors per sub-pass and accumulate
-        // whatever sections succeeded; the result is partial, not empty.
-        let passes: Double = 6
+        // Five sub-passes (down from six — dropped decisions and open questions). Each
+        // pass is independently fallible; a failure in Topics doesn't tank Summary.
+        let passes: Double = 5
 
         // 1. Summary
         let summary: String
@@ -173,32 +160,18 @@ struct AppleSummarizationService: SummarizationService {
         let topics = Self.dedupeTopics(topicAcc)
         onProgress?(3 / passes)
 
-        // 4. Decisions + action items
-        var decAcc: [String] = []
+        // 4. Action items
         var actAcc: [ActionItem] = []
         for chunk in chunks {
             do {
-                let e = try await extractDecisionsAndActions(chunk)
-                decAcc.append(contentsOf: e.decisions)
-                actAcc.append(contentsOf: e.actionItems)
+                actAcc.append(contentsOf: try await extractActionItems(chunk))
             } catch {
-                print("[Analyze] decisions/actions failed on a chunk: \(error)")
+                print("[Analyze] action items failed on a chunk: \(error)")
             }
         }
         onProgress?(4 / passes)
 
-        // 5. Open questions
-        var qAcc: [String] = []
-        for chunk in chunks {
-            do {
-                qAcc.append(contentsOf: try await extractOpenQuestions(chunk))
-            } catch {
-                print("[Analyze] open questions failed on a chunk: \(error)")
-            }
-        }
-        onProgress?(5 / passes)
-
-        // 6. Key dates
+        // 5. Key dates
         var dAcc: [KeyDate] = []
         for chunk in chunks {
             do {
@@ -209,15 +182,14 @@ struct AppleSummarizationService: SummarizationService {
         }
         onProgress?(1.0)
 
-        print("[Analyze] done — summary=\(summary.count) chars, attendees=\(attendees.count), topics=\(topics.count), decisions=\(decAcc.count), actions=\(actAcc.count), questions=\(qAcc.count), dates=\(dAcc.count)")
+        let dedupedActions = Self.dedupe(actAcc)
+        print("[Analyze] done — summary=\(summary.count) chars, attendees=\(attendees.count), topics=\(topics.count), actions=\(dedupedActions.count) (raw \(actAcc.count)), dates=\(dAcc.count)")
 
         return MeetingExtraction(
             summary: summary,
             attendees: attendees,
             topics: topics,
-            decisions: Self.dedupe(decAcc),
-            actionItems: Self.dedupe(actAcc),
-            openQuestions: Self.dedupe(qAcc),
+            actionItems: dedupedActions,
             keyDates: Self.dedupeKeyDates(dAcc)
         )
     }
@@ -274,21 +246,34 @@ struct AppleSummarizationService: SummarizationService {
 
     // MARK: - Per-section extractors
 
-    private func extractDecisionsAndActions(_ text: String) async throws -> (decisions: [String], actionItems: [ActionItem]) {
+    private func extractActionItems(_ text: String) async throws -> [ActionItem] {
         let instructions = """
-        Extract decisions and action items from this transcript. Be inclusive — not just \
-        formal conclusions but any agreement to do something or take an approach.
+        Extract action items that someone EXPLICITLY committed to. Be strict — quality \
+        over quantity. At most 5 per chunk.
 
-        For each action item, assignee MUST be a speaker label ("Speaker 1", "Speaker 2", ...) \
-        or "Unassigned". Do NOT use a person's name even if mentioned.
+        Include ONLY when someone clearly took on a task:
+        - "I'll handle X" / "I'll send Y" / "I'll set up Z"
+        - "Can you do X?" → "Yes / OK / Will do" exchange
+        - "We agreed Sarah will X"
 
-        Empty arrays are valid. Do NOT invent items.
+        EXCLUDE:
+        - Vague intentions ("we should probably look at...")
+        - Speculations ("maybe we could...")
+        - Things discussed but no one accepted
+        - Generic next steps not assigned to anyone specific
+
+        For each action item:
+        - assignee: speaker label ("Speaker 1", "Speaker 2", ...) of whoever accepted it. \
+        Use "Unassigned" only when no specific speaker took it on.
+        - task: one short imperative sentence.
+        - dueDate: only if a time was actually stated. Empty string otherwise.
+
+        If nothing meets the bar, return an empty array. Do NOT invent.
         """
         let session = LanguageModelSession(instructions: instructions)
         let response = try await session.respond(to: "Transcript:\n\(text)",
-                                                 generating: GenerableExtraction.self)
-        let g = response.content
-        let items = g.actionItems.map { gi -> ActionItem in
+                                                 generating: GenerableActionItems.self)
+        return response.content.actionItems.map { gi -> ActionItem in
             let due = gi.dueDate.trimmingCharacters(in: .whitespacesAndNewlines)
             return ActionItem(
                 assignee: gi.assignee.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -296,10 +281,6 @@ struct AppleSummarizationService: SummarizationService {
                 dueDate: due.isEmpty ? nil : due
             )
         }
-        return (
-            g.decisions.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) },
-            items
-        )
     }
 
     private func extractAttendees(_ text: String) async throws -> [String] {
@@ -328,11 +309,12 @@ struct AppleSummarizationService: SummarizationService {
 
         For each topic:
         - Give a short title (3 to 6 words, no leading numbering like "1.")
-        - Provide 2 to 4 short sentences expanding on what was said. Each point is a full \
+        - Provide 2 to 3 short sentences expanding on what was said. Each point is a full \
         sentence, not a fragment.
 
-        Return 5 to 10 topics in the order they came up. Empty array if the transcript has \
-        no substantive content (e.g. very short voice memo).
+        Return 3 to 5 topics — only the most substantial ones. Skip minor side comments \
+        and brief tangents. Empty array if the transcript has no substantive content \
+        (e.g. very short voice memo).
 
         Do NOT include speaker labels in the points. Do NOT invent content.
         """
@@ -346,29 +328,6 @@ struct AppleSummarizationService: SummarizationService {
                     .filter { !$0.isEmpty }
             )
         }.filter { !$0.title.isEmpty }
-    }
-
-    private func extractOpenQuestions(_ text: String) async throws -> [String] {
-        let instructions = """
-        List genuine open questions raised in this transcript that were NOT resolved.
-
-        Include:
-        - Questions explicitly asked and not answered
-        - Decisions deferred ("we'll figure this out later")
-        - Unknowns flagged ("we still don't know X")
-
-        Do NOT include:
-        - Rhetorical questions
-        - Questions that were answered in the same conversation
-
-        Empty array if no open questions remained. Do NOT invent.
-        """
-        let session = LanguageModelSession(instructions: instructions)
-        let response = try await session.respond(to: "Transcript:\n\(text)",
-                                                 generating: GenerableOpenQuestions.self)
-        return response.content.questions
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
     }
 
     private func extractKeyDates(_ text: String) async throws -> [KeyDate] {
@@ -456,13 +415,28 @@ struct AppleSummarizationService: SummarizationService {
         return out
     }
 
+    /// Jaccard similarity over word sets — fraction of words shared between two strings.
+    /// 1.0 means identical words, 0.0 means disjoint. Catches reworded duplicates that
+    /// substring matching misses ("send the contract" vs "send the contract draft to vendor").
+    private static func wordOverlapRatio(_ a: String, _ b: String) -> Double {
+        let wordsA = Set(a.split(separator: " ").map(String.init))
+        let wordsB = Set(b.split(separator: " ").map(String.init))
+        guard !wordsA.isEmpty, !wordsB.isEmpty else { return 0 }
+        let intersection = wordsA.intersection(wordsB).count
+        let union = wordsA.union(wordsB).count
+        return Double(intersection) / Double(union)
+    }
+
     private static func dedupe(_ items: [ActionItem]) -> [ActionItem] {
         var out: [ActionItem] = []
         for item in items {
             let normTask = normalize(item.task)
             let assignee = item.assignee.lowercased()
             if let idx = out.firstIndex(where: {
-                $0.assignee.lowercased() == assignee && roughlyEqual(normalize($0.task), normTask)
+                guard $0.assignee.lowercased() == assignee else { return false }
+                let other = normalize($0.task)
+                if roughlyEqual(other, normTask) { return true }
+                return wordOverlapRatio(other, normTask) >= 0.6
             }) {
                 if item.task.count > out[idx].task.count { out[idx] = item }
             } else {

@@ -70,14 +70,6 @@ enum RecordingExport {
             lines.append("")
         }
 
-        if !recording.decisions.isEmpty {
-            lines.append("────── DECISIONS ──────")
-            for d in recording.decisions {
-                lines.append("• \(recording.resolveSpeakerReferences(in: d))")
-            }
-            lines.append("")
-        }
-
         if !recording.actionItems.isEmpty {
             lines.append("────── ACTION ITEMS ──────")
             for item in recording.actionItems {
@@ -87,14 +79,6 @@ enum RecordingExport {
                     line += " (by \(due))"
                 }
                 lines.append(line)
-            }
-            lines.append("")
-        }
-
-        if !recording.openQuestions.isEmpty {
-            lines.append("────── OPEN QUESTIONS ──────")
-            for q in recording.openQuestions {
-                lines.append("• \(recording.resolveSpeakerReferences(in: q))")
             }
             lines.append("")
         }
