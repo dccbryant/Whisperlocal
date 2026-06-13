@@ -161,11 +161,12 @@ final class SessionStore: ObservableObject {
             rec.attendees = extraction.attendees
             rec.topics = extraction.topics
             rec.actionItems = extraction.actionItems
-            rec.keyDates = extraction.keyDates
-            // Decisions and open questions were removed in 0.2.2 — new recordings won't
-            // populate either field. Older recordings keep whatever they already had.
+            // Decisions, open questions, and key dates have been removed from the
+            // extraction pipeline. Fields stay on the Recording struct for Codable
+            // compat with older saved recordings; never populated on new ones.
             rec.decisions = []
             rec.openQuestions = []
+            rec.keyDates = []
 
             library.save(rec)
             lastCompleted = rec

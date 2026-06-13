@@ -10,14 +10,12 @@ struct MeetingExtraction: Hashable {
     let attendees: [String]
     let topics: [Topic]
     let actionItems: [ActionItem]
-    let keyDates: [KeyDate]
 
     static let empty = MeetingExtraction(
         summary: "",
         attendees: [],
         topics: [],
-        actionItems: [],
-        keyDates: []
+        actionItems: []
     )
 }
 
@@ -99,20 +97,6 @@ struct AppleSummarizationService: SummarizationService {
         let points: [String]
     }
 
-    @Generable
-    struct GenerableKeyDates {
-        @Guide(description: "Specific dates, deadlines, or time references that were explicitly stated.")
-        let dates: [GenerableKeyDate]
-    }
-
-    @Generable
-    struct GenerableKeyDate {
-        @Guide(description: "The date or timeframe as stated — 'Mid-July 2026', 'next Friday', 'end of Q3'.")
-        let date: String
-        @Guide(description: "Short description of what the date refers to — 'Granite 5.0 launch', 'Sarah's product review'.")
-        let context: String
-    }
-
     // MARK: - Orchestration
 
     func analyze(
@@ -122,9 +106,9 @@ struct AppleSummarizationService: SummarizationService {
         try ensureAvailable()
         let chunks = Self.chunk(text)
 
-        // Five sub-passes (down from six — dropped decisions and open questions). Each
-        // pass is independently fallible; a failure in Topics doesn't tank Summary.
-        let passes: Double = 5
+        // Four sub-passes (down from six — dropped decisions, open questions, key dates).
+        // Each pass is independently fallible; a failure in Topics doesn't tank Summary.
+        let passes: Double = 4
 
         // 1. Summary
         let summary: String
@@ -169,28 +153,16 @@ struct AppleSummarizationService: SummarizationService {
                 print("[Analyze] action items failed on a chunk: \(error)")
             }
         }
-        onProgress?(4 / passes)
-
-        // 5. Key dates
-        var dAcc: [KeyDate] = []
-        for chunk in chunks {
-            do {
-                dAcc.append(contentsOf: try await extractKeyDates(chunk))
-            } catch {
-                print("[Analyze] key dates failed on a chunk: \(error)")
-            }
-        }
         onProgress?(1.0)
 
         let dedupedActions = Self.dedupe(actAcc)
-        print("[Analyze] done — summary=\(summary.count) chars, attendees=\(attendees.count), topics=\(topics.count), actions=\(dedupedActions.count) (raw \(actAcc.count)), dates=\(dAcc.count)")
+        print("[Analyze] done — summary=\(summary.count) chars, attendees=\(attendees.count), topics=\(topics.count), actions=\(dedupedActions.count) (raw \(actAcc.count))")
 
         return MeetingExtraction(
             summary: summary,
             attendees: attendees,
             topics: topics,
-            actionItems: dedupedActions,
-            keyDates: Self.dedupeKeyDates(dAcc)
+            actionItems: dedupedActions
         )
     }
 
@@ -330,28 +302,6 @@ struct AppleSummarizationService: SummarizationService {
         }.filter { !$0.title.isEmpty }
     }
 
-    private func extractKeyDates(_ text: String) async throws -> [KeyDate] {
-        let instructions = """
-        List specific dates, deadlines, and timeframes that were explicitly mentioned.
-
-        For each:
-        - date: the date or timeframe as stated ("Mid-July 2026", "next Friday")
-        - context: what it refers to ("Granite 5.0 launch", "product review meeting")
-
-        Include only dates/times actually spoken. Do NOT invent context. Empty array if no \
-        time references were made.
-        """
-        let session = LanguageModelSession(instructions: instructions)
-        let response = try await session.respond(to: "Transcript:\n\(text)",
-                                                 generating: GenerableKeyDates.self)
-        return response.content.dates.map { gd in
-            KeyDate(
-                date: gd.date.trimmingCharacters(in: .whitespacesAndNewlines),
-                context: gd.context.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-        }.filter { !$0.date.isEmpty }
-    }
-
     // MARK: - Chunking
 
     /// Split a transcript into chunks small enough to fit the on-device LLM context window
@@ -472,17 +422,7 @@ struct AppleSummarizationService: SummarizationService {
         return out
     }
 
-    /// Key dates: fuzzy-match on date+context combined.
-    private static func dedupeKeyDates(_ dates: [KeyDate]) -> [KeyDate] {
-        var out: [KeyDate] = []
-        for kd in dates {
-            let key = normalize("\(kd.date) \(kd.context)")
-            if !out.contains(where: { roughlyEqual(normalize("\($0.date) \($0.context)"), key) }) {
-                out.append(kd)
-            }
-        }
-        return out
-    }
+
 
     private func ensureAvailable() throws {
         switch SystemLanguageModel.default.availability {
@@ -521,10 +461,7 @@ struct MockSummarizationService: SummarizationService {
                 : "[mock summary] " + lead + ".",
             attendees: [],
             topics: [],
-            decisions: [],
-            actionItems: [],
-            openQuestions: [],
-            keyDates: []
+            actionItems: []
         )
     }
 

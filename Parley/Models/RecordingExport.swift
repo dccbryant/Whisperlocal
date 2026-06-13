@@ -83,14 +83,6 @@ enum RecordingExport {
             lines.append("")
         }
 
-        if !recording.keyDates.isEmpty {
-            lines.append("────── KEY DATES ──────")
-            for kd in recording.keyDates {
-                lines.append("• \(kd.date) — \(recording.resolveSpeakerReferences(in: kd.context))")
-            }
-            lines.append("")
-        }
-
         if !recording.segments.isEmpty {
             lines.append("────── TRANSCRIPT ──────")
             for seg in recording.segments {

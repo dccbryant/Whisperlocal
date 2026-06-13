@@ -58,11 +58,6 @@ struct RecordingDetailView: View {
                             actionItemsBody
                         }
                     }
-                    if !current.keyDates.isEmpty {
-                        BraunCard(title: "Key dates") {
-                            keyDatesBody
-                        }
-                    }
                     if !current.segments.isEmpty {
                         BraunCard(title: "Transcript") {
                             transcriptBody
@@ -209,7 +204,7 @@ struct RecordingDetailView: View {
         return min(1, max(0, player.currentTime / total))
     }
 
-    // MARK: - Attendees / Topics / Key dates
+    // MARK: - Attendees / Topics
 
     private var attendeesBody: some View {
         Text(current.attendees.joined(separator: " · "))
@@ -232,19 +227,6 @@ struct RecordingDetailView: View {
                                 .textSelection(.enabled)
                         }
                     }
-                }
-            }
-        }
-    }
-
-    private var keyDatesBody: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(current.keyDates) { kd in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(kd.date).braunLabel(size: 10).foregroundStyle(BraunPalette.accent)
-                    Text(current.resolveSpeakerReferences(in: kd.context))
-                        .braunBody()
-                        .textSelection(.enabled)
                 }
             }
         }
