@@ -184,7 +184,7 @@ actor DiarizingTranscriptionService: TranscriptionService {
         var curStart = 0.0
         var curEnd = 0.0
         func flush() {
-            let text = curText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = Self.collapseWhitespace(curText)
             guard let label = curLabel, !text.isEmpty else { return }
             out.append(TranscriptSegment(
                 speakerLabel: "Speaker \(label)",
@@ -196,15 +196,19 @@ actor DiarizingTranscriptionService: TranscriptionService {
         for ws in whisperSegments {
             let segStart = Double(ws.start)
             let segEnd = Double(ws.end)
+            // Per-segment text carries raw special/timestamp tokens (<|startoftranscript|>,
+            // <|0.00|>, …); strip them. The result-level .text is pre-cleaned but has no
+            // per-segment timing, which we need for speaker alignment.
+            let cleaned = Self.stripSpecialTokens(ws.text)
             let label = speakerLabel(forStart: segStart, end: segEnd)
             if label != curLabel {
                 flush()
                 curLabel = label
-                curText = ws.text
+                curText = cleaned
                 curStart = segStart
                 curEnd = segEnd
             } else {
-                curText += ws.text
+                curText += cleaned
                 curEnd = segEnd
             }
         }
@@ -220,6 +224,17 @@ actor DiarizingTranscriptionService: TranscriptionService {
 
         guard !out.isEmpty else { throw ServiceError.empty }
         return out
+    }
+
+    /// Remove WhisperKit special/timestamp tokens like `<|startoftranscript|>` and `<|0.00|>`.
+    private static func stripSpecialTokens(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "<\\|[^|]*\\|>", with: "", options: .regularExpression)
+    }
+
+    /// Collapse runs of whitespace (left behind after token stripping) into single spaces.
+    private static func collapseWhitespace(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
