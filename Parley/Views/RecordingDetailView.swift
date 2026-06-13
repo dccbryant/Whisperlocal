@@ -56,11 +56,6 @@ struct RecordingDetailView: View {
                             topicsBody
                         }
                     }
-                    if !current.actionItems.isEmpty {
-                        BraunCard(title: "Action items") {
-                            actionItemsBody
-                        }
-                    }
                     if !current.segments.isEmpty {
                         BraunCard(title: "Transcript") {
                             transcriptBody

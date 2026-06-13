@@ -127,8 +127,8 @@ final class SessionStore: ObservableObject {
 
             stage = .summarizing
             stageProgress = 0
-            // analyze() does the four sub-passes (summary, attendees, topics, action items)
-            // and gets 0…0.9 of the bar; title() rounds it out from 0.9 to 1.0.
+            // analyze() produces summary + topics and gets 0…0.9 of the bar;
+            // title() rounds it out from 0.9 to 1.0.
             let extraction = (try? await summarizer.analyze(transcriptText) { [weak self] p in
                 Task { @MainActor [weak self] in self?.stageProgress = p * 0.9 }
             }) ?? .empty
@@ -166,7 +166,9 @@ final class SessionStore: ObservableObject {
             rec.summary = extraction.summary.isEmpty ? nil : extraction.summary
             rec.title = title
             rec.topics = extraction.topics
-            rec.actionItems = extraction.actionItems
+            // Action items removed from the pipeline; field stays on Recording for Codable
+            // compat with older saved recordings but is never populated on new ones.
+            rec.actionItems = []
             // Attendees, decisions, open questions, and key dates have all been removed
             // from the extraction pipeline. Fields stay on the Recording struct for
             // Codable compat with older saved recordings; never populated on new ones.
@@ -208,7 +210,6 @@ final class SessionStore: ObservableObject {
         guard var rec = library.recordings.first(where: { $0.id == recording.id }) else { return }
         if !extraction.summary.isEmpty { rec.summary = extraction.summary }
         if !extraction.topics.isEmpty { rec.topics = extraction.topics }
-        if !extraction.actionItems.isEmpty { rec.actionItems = extraction.actionItems }
         if (rec.title?.isEmpty ?? true), let newTitle, !newTitle.isEmpty { rec.title = newTitle }
         library.save(rec)
     }

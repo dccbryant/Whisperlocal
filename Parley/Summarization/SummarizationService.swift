@@ -3,17 +3,15 @@ import Foundation
 import FoundationModels
 #endif
 
-/// All of the structured information the summarizer pulls out of a transcript.
-/// Empty arrays / nil are valid for any field — voice memos shouldn't have meeting topics.
+/// The structured information the summarizer pulls out of a transcript.
+/// Empty arrays / empty summary are valid for any field — voice memos shouldn't have topics.
 struct MeetingExtraction: Hashable {
     let summary: String
     let topics: [Topic]
-    let actionItems: [ActionItem]
 
     static let empty = MeetingExtraction(
         summary: "",
-        topics: [],
-        actionItems: []
+        topics: []
     )
 }
 
@@ -165,13 +163,10 @@ struct AppleSummarizationService: SummarizationService {
             let s = await safeFinal(chunks[0])
             await breathe()
             let t = await safeTopics(chunks[0])
-            await breathe()
-            let a = await safeActions(chunks[0])
             onProgress?(1.0)
             let topicsCapped = Array(Self.dedupeTopics(t).prefix(5))
-            let actionsCapped = Array(Self.dedupe(a).prefix(4))
-            print("[Analyze] done (1 chunk sequential, \(String(format: "%.1f", Date().timeIntervalSince(analyzeStart)))s) — summary=\(s.count) chars, topics=\(topicsCapped.count), actions=\(actionsCapped.count) (raw \(a.count))")
-            return MeetingExtraction(summary: s, topics: topicsCapped, actionItems: actionsCapped)
+            print("[Analyze] done (1 chunk sequential, \(String(format: "%.1f", Date().timeIntervalSince(analyzeStart)))s) — summary=\(s.count) chars, topics=\(topicsCapped.count)")
+            return MeetingExtraction(summary: s, topics: topicsCapped)
         }
 
         // Multi-chunk path: walk chunks sequentially AND run each chunk's three passes
@@ -181,17 +176,13 @@ struct AppleSummarizationService: SummarizationService {
         // meeting. Pacing each call fixes that; FM serializes internally so we lose ~nothing.
         var briefSummaries: [String] = []
         var topicAcc: [Topic] = []
-        var actAcc: [ActionItem] = []
 
         for (i, chunk) in chunks.enumerated() {
             let b = await safeBrief(chunk)
             await breathe()
             let t = await safeTopics(chunk)
-            await breathe()
-            let a = await safeActions(chunk)
             if !b.isEmpty { briefSummaries.append(b) }
             topicAcc.append(contentsOf: t)
-            actAcc.append(contentsOf: a)
             // Per-chunk progress: leave a slice at the end for the final summary reduce.
             onProgress?(0.9 * Double(i + 1) / Double(chunks.count))
             await breathe()
@@ -211,17 +202,24 @@ struct AppleSummarizationService: SummarizationService {
             }
             joined = compressed.joined(separator: "\n\n")
         }
-        let summary = joined.isEmpty ? "" : await safeFinal(joined)
+        // Fall back to the joined briefs if the final reduce fails. We already produced
+        // good per-chunk summaries; never blank the whole summary just because the polish
+        // pass got rate-limited or refused. A slightly-rougher summary beats none.
+        let summary: String
+        if joined.isEmpty {
+            summary = ""
+        } else {
+            let polished = await safeFinal(joined)
+            summary = polished.isEmpty ? joined : polished
+        }
         onProgress?(1.0)
 
         let topics = Array(Self.dedupeTopics(topicAcc).prefix(5))
-        let dedupedActions = Array(Self.dedupe(actAcc).prefix(4))
-        print("[Analyze] done (\(chunks.count) chunks sequential, \(String(format: "%.1f", Date().timeIntervalSince(analyzeStart)))s) — summary=\(summary.count) chars, topics=\(topics.count), actions=\(dedupedActions.count) (raw \(actAcc.count))")
+        print("[Analyze] done (\(chunks.count) chunks sequential, \(String(format: "%.1f", Date().timeIntervalSince(analyzeStart)))s) — summary=\(summary.count) chars, topics=\(topics.count)")
 
         return MeetingExtraction(
             summary: summary,
-            topics: topics,
-            actionItems: dedupedActions
+            topics: topics
         )
     }
 
@@ -633,8 +631,7 @@ struct MockSummarizationService: SummarizationService {
             summary: lead.isEmpty
                 ? "[mock summary — Apple Intelligence not available on this device]"
                 : "[mock summary] " + lead + ".",
-            topics: [],
-            actionItems: []
+            topics: []
         )
     }
 
