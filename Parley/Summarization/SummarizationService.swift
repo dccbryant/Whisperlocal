@@ -91,20 +91,53 @@ struct AppleSummarizationService: SummarizationService {
 
     // MARK: - Orchestration
 
-    /// Call an Apple FM block, retry once on failure with a short delay. Apple's on-device
-    /// model occasionally throws transient errors under load; a second attempt almost
-    /// always succeeds. Logs both the original error and the retry outcome.
+    /// How to handle a failed Apple FM call.
+    private enum RetryDisposition {
+        /// Deterministic failure — retrying the identical input can't change the outcome.
+        case dontRetry
+        /// Transient failure — retry once after this delay.
+        case retryAfter(UInt64)
+    }
+
+    /// Classify an Apple FM error into a retry strategy. The key distinction: a content-safety
+    /// *refusal* is deterministic (same input → same refusal), so retrying only wastes a
+    /// session and adds rate-limit pressure. A *rate-limit* needs a real back-off, not the
+    /// 500 ms we use for generic transient hiccups.
+    private static func disposition(for error: Error) -> RetryDisposition {
+        guard let gen = error as? LanguageModelSession.GenerationError else {
+            return .retryAfter(500_000_000)
+        }
+        switch gen {
+        case .refusal:
+            return .dontRetry
+        case .rateLimited:
+            return .retryAfter(3_000_000_000)
+        default:
+            return .retryAfter(500_000_000)
+        }
+    }
+
+    /// Call an Apple FM block, retrying once on *transient* failure. Apple's on-device model
+    /// occasionally throws transient errors under load; a second attempt usually succeeds.
+    /// Refusals are not retried — they're deterministic — and rate-limits back off harder.
+    /// Logs the original error and the retry outcome.
     private func withRetry<T>(_ label: String, _ block: () async throws -> T) async throws -> T {
         do {
             return try await block()
         } catch {
-            print("[Analyze] \(label) failed once, retrying after 500ms: \(error)")
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            do {
-                return try await block()
-            } catch {
-                print("[Analyze] \(label) failed twice, giving up: \(error)")
+            switch Self.disposition(for: error) {
+            case .dontRetry:
+                print("[Analyze] \(label) refused — not retrying (deterministic): \(error)")
                 throw error
+            case .retryAfter(let delay):
+                print("[Analyze] \(label) failed once, retrying after \(delay / 1_000_000)ms: \(error)")
+                try? await Task.sleep(nanoseconds: delay)
+                do {
+                    return try await block()
+                } catch {
+                    print("[Analyze] \(label) failed twice, giving up: \(error)")
+                    throw error
+                }
             }
         }
     }
@@ -210,6 +243,10 @@ struct AppleSummarizationService: SummarizationService {
 
     func title(for text: String) async throws -> String {
         try ensureAvailable()
+        // The title call fires right after analyze()'s burst of sessions. Without a beat
+        // here it lands on the rate limiter (observed: title rate-limited while analyze
+        // succeeded). A short pause lets the model drain before we ask for one more thing.
+        await breathe()
         let snippet = String(text.prefix(4_000))
         return try await withRetry("title") {
             let instructions = """
