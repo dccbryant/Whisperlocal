@@ -112,32 +112,45 @@ actor DiarizingTranscriptionService: TranscriptionService {
             return [TranscriptSegment(speakerLabel: "Speaker 1", text: text, start: 0, end: audioSeconds)]
         }
 
-        // Transcribe the whole audio in ONE pass. Whisper has no incremental progress hook
-        // here, so creep the bar from 0.3 toward 0.85 while it runs, then snap to 0.9.
-        let transcribeCreep: Task<Void, Never>? = onProgress.map { cb in
-            Task {
-                var elapsed: Double = 0
-                while !Task.isCancelled {
-                    do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
-                    elapsed += 1
-                    cb(0.3 + 0.55 * (1 - exp(-elapsed / 60)))
-                }
-            }
-        }
+        // Transcribe in bounded fixed-size windows rather than one giant call. A single
+        // full-length transcribe hammers the ANE continuously until CoreML's ML Program
+        // prediction watchdog times out. Bounded windows with a brief rest between them stay
+        // safe — and it's still far fewer calls than the old per-speaker-turn slicing, so we
+        // keep the speed. Whisper timestamps are window-local, so we offset them to absolute.
+        let windowSamples = 120 * 16_000   // 2-minute windows
+        let windowCount = max(1, Int(ceil(Double(samples.count) / Double(windowSamples))))
         let whisperStart = Date()
-        let results: [TranscriptionResult]
-        do {
-            results = try await whisper.transcribe(audioArray: samples)
-        } catch {
-            transcribeCreep?.cancel()
-            throw error
+        var whisperSegments: [(start: Double, end: Double, text: String)] = []
+        for w in 0..<windowCount {
+            let startSample = w * windowSamples
+            let endSample = min(samples.count, startSample + windowSamples)
+            guard endSample > startSample else { break }
+            let offset = Double(startSample) / 16_000
+            let slice = Array(samples[startSample..<endSample])
+
+            let results: [TranscriptionResult]
+            do {
+                results = try await whisper.transcribe(audioArray: slice)
+            } catch {
+                // ANE predictions occasionally time out transiently; rest and retry once
+                // before failing the whole recording.
+                print("[Timing] window \(w + 1)/\(windowCount) failed, retrying after 1s: \(error)")
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                results = try await whisper.transcribe(audioArray: slice)
+            }
+
+            for seg in results.flatMap({ $0.segments }) {
+                whisperSegments.append((
+                    start: offset + Double(seg.start),
+                    end: offset + Double(seg.end),
+                    text: Self.stripSpecialTokens(seg.text)
+                ))
+            }
+            onProgress?(0.3 + 0.6 * Double(w + 1) / Double(windowCount))
+            try? await Task.sleep(nanoseconds: 100_000_000)   // let the ANE breathe
         }
-        transcribeCreep?.cancel()
         let whisperElapsed = Date().timeIntervalSince(whisperStart)
         onProgress?(0.9)
-
-        // Whisper's timestamped segments (start/end in seconds), in chronological order.
-        let whisperSegments = results.flatMap { $0.segments }
 
         // Dense 1-based speaker labels in first-appearance (time) order. SpeakerKit cluster
         // IDs can be sparse (0, 3, 7); remap them to Speaker 1, 2, 3 …
@@ -193,23 +206,18 @@ actor DiarizingTranscriptionService: TranscriptionService {
                 end: curEnd
             ))
         }
+        // whisperSegments already carry absolute timestamps and token-stripped text.
         for ws in whisperSegments {
-            let segStart = Double(ws.start)
-            let segEnd = Double(ws.end)
-            // Per-segment text carries raw special/timestamp tokens (<|startoftranscript|>,
-            // <|0.00|>, …); strip them. The result-level .text is pre-cleaned but has no
-            // per-segment timing, which we need for speaker alignment.
-            let cleaned = Self.stripSpecialTokens(ws.text)
-            let label = speakerLabel(forStart: segStart, end: segEnd)
+            let label = speakerLabel(forStart: ws.start, end: ws.end)
             if label != curLabel {
                 flush()
                 curLabel = label
-                curText = cleaned
-                curStart = segStart
-                curEnd = segEnd
+                curText = ws.text
+                curStart = ws.start
+                curEnd = ws.end
             } else {
-                curText += cleaned
-                curEnd = segEnd
+                curText += ws.text
+                curEnd = ws.end
             }
         }
         flush()
@@ -217,8 +225,8 @@ actor DiarizingTranscriptionService: TranscriptionService {
         onProgress?(1.0)
 
         let audioSeconds = Double(samples.count) / 16_000
-        print(String(format: "[Timing] transcribe: audio=%.0fs, diarize=%.1fs, whisper=%.1fs (1 pass), %d whisper segs → %d turns, %d speakers, stage=%.1fs",
-                     audioSeconds, diarizeElapsed, whisperElapsed,
+        print(String(format: "[Timing] transcribe: audio=%.0fs, diarize=%.1fs, whisper=%.1fs (%d windows), %d whisper segs → %d turns, %d speakers, stage=%.1fs",
+                     audioSeconds, diarizeElapsed, whisperElapsed, windowCount,
                      whisperSegments.count, out.count, labelMap.count,
                      Date().timeIntervalSince(stageStart)))
 
