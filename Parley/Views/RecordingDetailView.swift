@@ -43,11 +43,6 @@ struct RecordingDetailView: View {
                                 .textSelection(.enabled)
                         }
                     }
-                    if !current.attendees.isEmpty {
-                        BraunCard(title: "Attendees") {
-                            attendeesBody
-                        }
-                    }
                     if !current.topics.isEmpty {
                         BraunCard(title: "Topics") {
                             topicsBody
@@ -204,13 +199,7 @@ struct RecordingDetailView: View {
         return min(1, max(0, player.currentTime / total))
     }
 
-    // MARK: - Attendees / Topics
-
-    private var attendeesBody: some View {
-        Text(current.attendees.joined(separator: " · "))
-            .braunBody()
-            .textSelection(.enabled)
-    }
+    // MARK: - Topics
 
     private var topicsBody: some View {
         VStack(alignment: .leading, spacing: 18) {

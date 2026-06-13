@@ -52,12 +52,6 @@ enum RecordingExport {
             lines.append("")
         }
 
-        if !recording.attendees.isEmpty {
-            lines.append("────── ATTENDEES ──────")
-            lines.append(recording.attendees.joined(separator: ", "))
-            lines.append("")
-        }
-
         if !recording.topics.isEmpty {
             lines.append("────── TOPICS ──────")
             for topic in recording.topics {

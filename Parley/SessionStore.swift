@@ -137,7 +137,6 @@ final class SessionStore: ObservableObject {
             // certainly transiently unavailable. Don't save a stub recording silently —
             // surface .failed so the user gets a Try Again button.
             let everythingFailed = extraction.summary.isEmpty
-                && extraction.attendees.isEmpty
                 && extraction.topics.isEmpty
                 && extraction.actionItems.isEmpty
                 && title == nil
@@ -172,12 +171,12 @@ final class SessionStore: ObservableObject {
             rec.segments = segments
             rec.summary = extraction.summary.isEmpty ? nil : extraction.summary
             rec.title = title
-            rec.attendees = extraction.attendees
             rec.topics = extraction.topics
             rec.actionItems = extraction.actionItems
-            // Decisions, open questions, and key dates have been removed from the
-            // extraction pipeline. Fields stay on the Recording struct for Codable
-            // compat with older saved recordings; never populated on new ones.
+            // Attendees, decisions, open questions, and key dates have all been removed
+            // from the extraction pipeline. Fields stay on the Recording struct for
+            // Codable compat with older saved recordings; never populated on new ones.
+            rec.attendees = []
             rec.decisions = []
             rec.openQuestions = []
             rec.keyDates = []

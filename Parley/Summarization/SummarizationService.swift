@@ -7,13 +7,11 @@ import FoundationModels
 /// Empty arrays / nil are valid for any field — voice memos shouldn't have meeting topics.
 struct MeetingExtraction: Hashable {
     let summary: String
-    let attendees: [String]
     let topics: [Topic]
     let actionItems: [ActionItem]
 
     static let empty = MeetingExtraction(
         summary: "",
-        attendees: [],
         topics: [],
         actionItems: []
     )
@@ -63,7 +61,7 @@ struct AppleSummarizationService: SummarizationService {
 
     @Generable
     struct GenerableActionItems {
-        @Guide(description: "Action items that someone explicitly committed to. At most 5 in any single chunk. Quality over quantity — only include clear commitments.")
+        @Guide(description: "Action items that someone explicitly committed to with a concrete deadline. At most 3 in any single chunk. Quality over quantity — only the most important commitments.")
         let actionItems: [GenerableActionItem]
     }
 
@@ -75,12 +73,6 @@ struct AppleSummarizationService: SummarizationService {
         let task: String
         @Guide(description: "When it is due — 'Friday', 'next Tuesday', 'end of quarter'. Empty string if no time was mentioned.")
         let dueDate: String
-    }
-
-    @Generable
-    struct GenerableAttendees {
-        @Guide(description: "First names of people who participated in the conversation, based on names spoken or addressed. Do NOT include speaker labels. Empty array if no names are mentioned.")
-        let attendees: [String]
     }
 
     @Generable
@@ -130,9 +122,9 @@ struct AppleSummarizationService: SummarizationService {
         try ensureAvailable()
         let chunks = Self.chunk(text)
 
-        // Four sub-passes (down from six — dropped decisions, open questions, key dates).
-        // Each pass is independently fallible; a failure in Topics doesn't tank Summary.
-        let passes: Double = 4
+        // Three sub-passes: summary, topics, action items. Each is independently fallible;
+        // a failure in Topics doesn't tank Summary.
+        let passes: Double = 3
 
         // 1. Summary
         let summary: String
@@ -144,19 +136,7 @@ struct AppleSummarizationService: SummarizationService {
         onProgress?(1 / passes)
         await breathe()
 
-        // 2. Attendees
-        var attendeeAcc: [String] = []
-        for chunk in chunks {
-            do {
-                let res = try await withRetry("attendees") { try await extractAttendees(chunk) }
-                attendeeAcc.append(contentsOf: res)
-            } catch { /* logged in withRetry */ }
-        }
-        let attendees = Self.dedupeNames(attendeeAcc)
-        onProgress?(2 / passes)
-        await breathe()
-
-        // 3. Topics
+        // 2. Topics
         var topicAcc: [Topic] = []
         for chunk in chunks {
             do {
@@ -165,10 +145,10 @@ struct AppleSummarizationService: SummarizationService {
             } catch { /* logged in withRetry */ }
         }
         let topics = Self.dedupeTopics(topicAcc)
-        onProgress?(3 / passes)
+        onProgress?(2 / passes)
         await breathe()
 
-        // 4. Action items
+        // 3. Action items
         var actAcc: [ActionItem] = []
         for chunk in chunks {
             do {
@@ -178,12 +158,13 @@ struct AppleSummarizationService: SummarizationService {
         }
         onProgress?(1.0)
 
-        let dedupedActions = Self.dedupe(actAcc)
-        print("[Analyze] done — summary=\(summary.count) chars, attendees=\(attendees.count), topics=\(topics.count), actions=\(dedupedActions.count) (raw \(actAcc.count))")
+        // Dedupe then hard-cap. Even after dedupe the small model is overgenerous, so a
+        // total ceiling of 6 keeps the list focused on the most important commitments.
+        let dedupedActions = Array(Self.dedupe(actAcc).prefix(6))
+        print("[Analyze] done — summary=\(summary.count) chars, topics=\(topics.count), actions=\(dedupedActions.count) (raw \(actAcc.count))")
 
         return MeetingExtraction(
             summary: summary,
-            attendees: attendees,
             topics: topics,
             actionItems: dedupedActions
         )
@@ -263,7 +244,9 @@ struct AppleSummarizationService: SummarizationService {
         - "when ready" / "when possible" / "when they come through"
         - "ongoing" / "continuously"
 
-        At most 5 action items per chunk. Quality over quantity.
+        At most 3 action items per chunk. Be extremely selective — pick ONLY the most \
+        important, time-sensitive commitments. If unsure whether to include something, \
+        leave it out.
 
         For each item kept:
         - assignee: speaker label ("Speaker 1", "Speaker 2", ...) of whoever accepted it. \
@@ -332,25 +315,6 @@ struct AppleSummarizationService: SummarizationService {
         return false
     }
 
-    private func extractAttendees(_ text: String) async throws -> [String] {
-        let instructions = """
-        List the first names of people who participated in the conversation.
-
-        Look for:
-        - Self-introductions ("Hi, I'm Sarah")
-        - Names addressed directly ("Sarah, what do you think?")
-        - Names mentioned as the speaker of an action ("Tom will send the report")
-
-        Output first names only, no titles or surnames. Do NOT include speaker labels \
-        ("Speaker 1" etc.). Do NOT invent names not in the transcript. Empty array is valid.
-        """
-        let session = LanguageModelSession(instructions: instructions)
-        let response = try await session.respond(to: "Transcript:\n\(text)",
-                                                 generating: GenerableAttendees.self)
-        return response.content.attendees
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-    }
 
     private func extractTopics(_ text: String) async throws -> [Topic] {
         let instructions = """
@@ -482,16 +446,6 @@ struct AppleSummarizationService: SummarizationService {
         return out
     }
 
-    /// Names: case-insensitive exact match.
-    private static func dedupeNames(_ names: [String]) -> [String] {
-        var out: [String] = []
-        var seen = Set<String>()
-        for name in names {
-            let key = name.lowercased()
-            if seen.insert(key).inserted { out.append(name) }
-        }
-        return out
-    }
 
     /// Topics: fuzzy-match titles. When duplicates collide, union the points.
     private static func dedupeTopics(_ topics: [Topic]) -> [Topic] {
@@ -545,7 +499,6 @@ struct MockSummarizationService: SummarizationService {
             summary: lead.isEmpty
                 ? "[mock summary — Apple Intelligence not available on this device]"
                 : "[mock summary] " + lead + ".",
-            attendees: [],
             topics: [],
             actionItems: []
         )
