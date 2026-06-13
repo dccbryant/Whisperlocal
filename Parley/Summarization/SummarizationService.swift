@@ -144,7 +144,7 @@ struct AppleSummarizationService: SummarizationService {
                 topicAcc.append(contentsOf: res)
             } catch { /* logged in withRetry */ }
         }
-        let topics = Self.dedupeTopics(topicAcc)
+        let topics = Array(Self.dedupeTopics(topicAcc).prefix(5))
         onProgress?(2 / passes)
         await breathe()
 
@@ -159,8 +159,8 @@ struct AppleSummarizationService: SummarizationService {
         onProgress?(1.0)
 
         // Dedupe then hard-cap. Even after dedupe the small model is overgenerous, so a
-        // total ceiling of 6 keeps the list focused on the most important commitments.
-        let dedupedActions = Array(Self.dedupe(actAcc).prefix(6))
+        // total ceiling of 4 keeps the list focused on the most important commitments.
+        let dedupedActions = Array(Self.dedupe(actAcc).prefix(4))
         print("[Analyze] done — summary=\(summary.count) chars, topics=\(topics.count), actions=\(dedupedActions.count) (raw \(actAcc.count))")
 
         return MeetingExtraction(
@@ -346,9 +346,12 @@ struct AppleSummarizationService: SummarizationService {
     // MARK: - Chunking
 
     /// Split a transcript into chunks small enough to fit the on-device LLM context window
-    /// alongside our instructions and the expected response. Apple's on-device model carries
-    /// roughly a 4K-token context (≈ 12K English characters); 8K leaves comfortable headroom.
-    private static func chunk(_ text: String, maxChars: Int = 8_000) -> [String] {
+    /// alongside our instructions and the expected response. Apple's on-device model has a
+    /// hard 4096-token limit. With our instructions (~600 tokens) and expected output
+    /// (~600 tokens), the transcript chunk gets about 2900 tokens — call it 4000 chars
+    /// of English with comfortable safety margin. Earlier 8000-char chunks were tripping
+    /// `exceededContextWindowSize` errors on the topics and action items passes.
+    private static func chunk(_ text: String, maxChars: Int = 4_000) -> [String] {
         if text.count <= maxChars { return [text] }
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         var chunks: [String] = []
@@ -447,14 +450,22 @@ struct AppleSummarizationService: SummarizationService {
     }
 
 
-    /// Topics: fuzzy-match titles. When duplicates collide, union the points.
+    /// Topics: fuzzy-match titles. Uses substring + Jaccard overlap, same approach as
+    /// action item dedupe, so genuinely similar topics ("Marketing Plan" vs "Marketing
+    /// Strategy") collapse together rather than appearing twice. When two collide, the
+    /// merged topic keeps the longer (more specific) title and the union of points.
     private static func dedupeTopics(_ topics: [Topic]) -> [Topic] {
         var out: [Topic] = []
         for topic in topics {
             let normTitle = normalize(topic.title)
-            if let idx = out.firstIndex(where: { roughlyEqual(normalize($0.title), normTitle) }) {
+            if let idx = out.firstIndex(where: {
+                let other = normalize($0.title)
+                if roughlyEqual(other, normTitle) { return true }
+                return wordOverlapRatio(other, normTitle) >= 0.45
+            }) {
+                let keptTitle = topic.title.count > out[idx].title.count ? topic.title : out[idx].title
                 let mergedPoints = dedupe(out[idx].points + topic.points)
-                out[idx] = Topic(id: out[idx].id, title: out[idx].title, points: mergedPoints)
+                out[idx] = Topic(id: out[idx].id, title: keptTitle, points: mergedPoints)
             } else {
                 out.append(topic)
             }
