@@ -121,10 +121,16 @@ struct LibraryView: View {
             ForEach(sections, id: \.title) { section in
                 Section {
                     ForEach(section.items) { rec in
-                        NavigationLink(value: rec) { row(for: rec) }
+                        row(for: rec)
                             .listRowBackground(BraunPalette.background)
                             .listRowSeparatorTint(BraunPalette.divider)
-                            .listRowInsets(EdgeInsets(top: 14, leading: 24, bottom: 14, trailing: 16))
+                            .listRowInsets(EdgeInsets(top: 16, leading: 24, bottom: 16, trailing: 24))
+                            // Value-based link in the background hides List's disclosure
+                            // chevron while keeping the whole row tappable — the right edge
+                            // stays a clean column of dates.
+                            .background {
+                                NavigationLink(value: rec) { EmptyView() }.opacity(0)
+                            }
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button(role: .destructive) {
                                     library.delete(rec)
@@ -136,7 +142,12 @@ struct LibraryView: View {
                 } header: {
                     Text(section.title)
                         .braunLabel(size: 10)
-                        .padding(.vertical, 4)
+                        // Optically center the all-caps label on its cap-height: trim the
+                        // empty descender space beneath the glyphs, then pad symmetrically.
+                        .padding(.bottom, -2)
+                        .padding(.vertical, 14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 24, bottom: 0, trailing: 24))
                 }
             }
         }
@@ -145,29 +156,46 @@ struct LibraryView: View {
     }
 
     private func row(for rec: Recording) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
+        // Three tonal levels carry the hierarchy: title (foreground), summary preview
+        // (secondary), metadata (faint). Spacing is uniform so the rows share one rhythm.
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text(rec.title ?? "Untitled recording")
                     .font(.system(size: 15, weight: .semibold))
+                    .kerning(-0.1)
                     .foregroundStyle(BraunPalette.foreground)
-                Spacer()
-                Text(timeStamp(for: rec)).braunDigit(size: 11).foregroundStyle(BraunPalette.secondary)
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+                Text(timeStamp(for: rec))
+                    .font(.system(size: 11, weight: .regular))
+                    .monospacedDigit()
+                    .foregroundStyle(BraunPalette.secondary)
             }
             if let summary = rec.summary, !summary.isEmpty {
                 Text(summary)
-                    .braunBody()
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(BraunPalette.secondary)
+                    .lineSpacing(3)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
             }
-            HStack(spacing: 14) {
-                Text(durationText(rec.duration)).braunLabel(size: 9)
-                let speakers = rec.distinctSpeakerLabels.count
-                if speakers > 0 {
-                    Text("\(speakers) speaker\(speakers == 1 ? "" : "s")").braunLabel(size: 9)
-                }
-            }
+            Text(metaText(for: rec))
+                .font(.system(size: 9.5, weight: .semibold))
+                .kerning(1.6)
+                .textCase(.uppercase)
+                .monospacedDigit()
+                .foregroundStyle(BraunPalette.faint)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 2)
+    }
+
+    /// One metadata line: duration · speaker count, in tracked small caps with tabular digits.
+    private func metaText(for rec: Recording) -> String {
+        let dur = durationText(rec.duration)
+        let speakers = rec.distinctSpeakerLabels.count
+        guard speakers > 0 else { return dur }
+        return "\(dur)  ·  \(speakers) speaker\(speakers == 1 ? "" : "s")"
     }
 
     private func timeStamp(for rec: Recording) -> String {

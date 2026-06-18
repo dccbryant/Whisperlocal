@@ -11,6 +11,7 @@ enum BraunPalette {
     static let foreground  = Color(red: 0.145, green: 0.145, blue: 0.145)  // charcoal
     static let secondary   = Color(red: 0.435, green: 0.415, blue: 0.380)  // warm gray
     static let divider     = Color(red: 0.780, green: 0.745, blue: 0.665)  // hairline
+    static let faint       = Color(red: 0.647, green: 0.620, blue: 0.561)  // recedes below secondary (metadata)
     static let accent      = Color(red: 0.905, green: 0.290, blue: 0.110)  // Braun orange
     static let recording   = Color(red: 0.700, green: 0.150, blue: 0.080)  // muted record red
 }
