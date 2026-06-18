@@ -102,16 +102,21 @@ sm_a, sm_d = f_search.getmetrics()
 d.text((L + u(36), my + sm_a // 2 - u(1)), "Search recordings", font=f_search, fill=FAINT, anchor="lm")
 
 # ---------- helpers for list ----------
-def section(y, text):
-    a, dd = f_label.getmetrics()
-    tracked(L, y + a, text, f_label, SECOND, 2.4)
-    return y + a + dd
+def section(y_top, text, band=u(50)):
+    # Optically center the CAP box (not the baseline line-box) within the header band,
+    # so the all-caps label reads as vertically centered instead of riding too high.
+    trial = u(1000)
+    bbox = d.textbbox((L, trial), text, font=f_label, anchor="ls")
+    cap_h = trial - bbox[1]                        # cap height (no descenders in caps)
+    baseline = round(y_top + band / 2 + cap_h / 2)
+    tracked(L, baseline, text, f_label, SECOND, 2.4)
+    return y_top + band
 
 def hairline(y):
     d.line([(L, y), (R, y)], fill=DIVIDER, width=max(1, u(0.7)))
 
-def row(y, title, date, preview, meta):
-    y += u(18)                                    # top padding
+def row(y, title, date, preview, meta, top_pad=u(18)):
+    y += top_pad                                   # top padding
     ta, td = f_title.getmetrics()
     base = y + ta
     d.text((L, base), title, font=f_title, fill=FG, anchor="ls")
@@ -129,20 +134,20 @@ def row(y, title, date, preview, meta):
     return y
 
 # ---------- content ----------
-y = u(176)
-y = section(y, "YESTERDAY"); y += u(14)
+y = u(168)
+y = section(y, "YESTERDAY")
 y = row(y, "Model Trade-Off Discussion", "6:33 PM",
         "The speaker discusses a trade-off between model performance and time investment. They illustrate the cost of over-engineering.",
-        "2:05   ·   1 SPEAKER")
+        "2:05   ·   1 SPEAKER", top_pad=u(4))
 y = row(y, "Adi Joins the DevOps Team", "11:30 AM",
         "The team discusses weekend coverage and GEOs, and the potential addition of Adi for increased capacity.",
         "27:55   ·   5 SPEAKERS")
 
-y += u(22)
-y = section(y, "THIS MONTH"); y += u(14)
+y += u(12)
+y = section(y, "THIS MONTH")
 y = row(y, "AI Market Shift & Subscription Challenges", "Jun 13",
         "The conversation covers the transition from subscriptions to tokens for pricing AI services, emphasizing margin pressure.",
-        "1:09:52   ·   7 SPEAKERS")
+        "1:09:52   ·   7 SPEAKERS", top_pad=u(4))
 y = row(y, "Quantum Tech Event Planning", "Jun 13",
         "A team develops a quantum-focused event, emphasizing a shared vision and a clear go-to-market strategy.",
         "50:50   ·   7 SPEAKERS")
