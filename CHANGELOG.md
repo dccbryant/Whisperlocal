@@ -3,9 +3,9 @@
 All notable changes to Parley are recorded here. Newest first.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com); dates are release/submission dates.
 
-## [0.3.0] — build 20
+## [0.3.1] — build 20
 
-The 0.3.0 cycle is a major reliability and performance pass over the recording →
+The 0.3.x cycle is a major reliability and performance pass over the recording →
 transcription → summarization pipeline, plus a typographic refresh of the library.
 Everything still runs 100% on-device; nothing is uploaded.
 

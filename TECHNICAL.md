@@ -2,7 +2,7 @@
 
 ## 1. What it is
 
-iOS app that records conversations and produces structured notes (title, summary, decisions, action items, transcript) entirely on-device. No backend, no cloud inference, no analytics. The only network call is the first-launch download of the ML models from a public model repository.
+iOS app that records conversations and produces structured notes (title, summary, topics, transcript) entirely on-device. No backend, no cloud inference, no analytics. The only network call is the first-launch download of the ML models from a public model repository.
 
 ## 2. Platform target
 
@@ -73,6 +73,8 @@ Shared/
 - **Compute units**: Neural Engine (with automatic CPU fallback on simulator since the simulator has no ANE)
 - **Input format**: 16 kHz mono Float32 PCM, normalized to [-1, 1]
 - **API used**: `whisper.transcribe(audioArray: [Float])` — we never use the file-path variant because it had decode issues with certain m4a files on simulator during development
+- **Transcription strategy**: the full audio is transcribed in **bounded ~2-minute windows** (sequentially, with a brief rest and a one-shot retry per window), not one giant call and not one call per speaker turn. The single-giant-call approach hammered the ANE continuously until CoreML's "ML Program prediction" watchdog timed out on long recordings; the old per-speaker-turn slicing paid ~5 s of fixed per-call overhead on every segment (hundreds of calls on a long meeting). Windowing keeps each call within a proven-safe size while staying fast — an hour transcribes in minutes, not 8–10+.
+- **Token cleanup**: Whisper's per-segment text carries raw special/timestamp tokens (`<|startoftranscript|>`, `<|0.00|>`); these are stripped and whitespace collapsed before display.
 - **Model download**: handled by WhisperKit on first call; caches under the app's sandbox
 
 ### 4.2 Speaker diarization — SpeakerKit (Argmax OSS, same package)
@@ -81,22 +83,24 @@ Shared/
 - **Backbone**: Pyannote-based CoreML pipeline
 - **Input format**: same 16 kHz mono Float32 PCM
 - **API used**: `speakers.diarize(audioArray: [Float])` → `DiarizationResult` with `segments: [SpeakerSegment]`
-- **Speaker labels**: raw cluster IDs from Pyannote (which can be sparse — `0, 3, 7`) are remapped to dense 1-based labels `Speaker 1`, `Speaker 2`, … in first-appearance order
-- **Segment filtering**: speaker segments shorter than 200 ms (3,200 samples at 16 kHz) are dropped — Whisper hallucinates on them
+- **Speaker labels**: raw cluster IDs from Pyannote (which can be sparse — `0, 3, 7`) are remapped to dense 1-based labels `Speaker 1`, `Speaker 2`, … in first-appearance (time) order
+- **Speaker assignment**: because transcription is windowed (not sliced per speaker turn), each Whisper segment is assigned a speaker by **maximum timestamp overlap** with the diarization ranges (nearest-range fallback when a segment lands in a gap). Consecutive same-speaker segments are then merged into one "Speaker N" turn.
 
-### 4.3 Summarization, title, extraction — Apple Foundation Models
+### 4.3 Summarization, title, topics — Apple Foundation Models
 
 - **Framework**: `FoundationModels` (iOS 26+)
 - **Model**: `SystemLanguageModel.default` (Apple Intelligence's ~3B-parameter on-device model)
 - **API**: `LanguageModelSession(instructions:)` + `session.respond(to:)` for free-form output
-- **Structured output**: `@Generable` macro for `MeetingExtraction` so action items return as typed Swift structs rather than parsed JSON
+- **Structured output**: `@Generable` macro for topics (`GenerableTopics`/`GenerableTopic`) so they return as typed Swift structs rather than parsed JSON
 - **Availability gating**: `@available(iOS 26.0, *)`. Falls back to `MockSummarizationService` on older iOS or non-Apple-Intelligence devices.
-- **Three calls per recording**:
-  1. `summarize(_:)` — 2–3 sentence prose summary, under 60 words
-  2. `title(for:)` — 3–5 word headline-style title (input truncated to 4 K chars; never needs full transcript)
-  3. `extract(from:)` — `[String] decisions` + `[ActionItem] actionItems` via `@Generable` structured output
-- **Long-transcript handling**: transcripts longer than ~8 K characters are split on speaker-turn (newline) boundaries; `summarize()` runs map-reduce (per-chunk summaries then a final reduce); `extract()` unions decisions/action items per chunk then fuzzy-dedupes.
-- **Dedupe**: lowercased, punctuation-stripped, stopwords removed (`the`, `a`, `to`, `for`, `and`, `or`, `but`, `by`, `of`, `in`, `on`, `with`, `from`, `is`, `it`, `this`, `that`, `be`, `will`); substring-containment treated as duplicate; for action items, longest task wording wins on collision.
+- **What it produces**: `analyze(_:)` returns a `MeetingExtraction` of **summary + topics**; `title(for:)` is a separate call (3–5 word headline; input truncated to 4 K chars). Action items, decisions, attendees, open questions, and key dates have all been removed from the pipeline.
+- **Chunking + map-reduce**: transcripts are split on speaker-turn (newline) boundaries at ~6 K chars/chunk (keeps the full prompt under the model's ~4096-token window). Summary runs hierarchical map-reduce (per-chunk brief → recursive compress while >3.5 K → final reduce); topics are unioned per chunk then fuzzy-deduped.
+- **Sequential + paced**: the per-chunk sub-passes (brief summary, topics) run **sequentially with a short `breathe()` between each call**, not concurrently. Firing them concurrently per chunk tripped the on-device model's rate limiter on long meetings, cascading until every pass returned empty. `title()` also takes a beat before firing so it doesn't land on the limiter right after the analyze burst.
+- **Failure handling**:
+  - **Refusals are not retried** (content-safety refusals are deterministic — a retry only wastes a session and adds rate-limit pressure); **rate-limit errors back off ~3 s** before a single retry; other transient errors retry after 500 ms.
+  - **Summary never blanks on a failed reduce**: if the final polish pass fails, the summary falls back to the joined per-chunk briefs already produced.
+  - **A successful transcript is never discarded** if summarization fails — the recording is saved and the detail view offers a **Generate summary** retry (`SessionStore.resummarize(_:)`, which re-runs `analyze` + `title` on the saved transcript, no re-transcription).
+- **Dedupe**: lowercased, punctuation-stripped, stopwords removed (`the`, `a`, `to`, `for`, `and`, `or`, `but`, `by`, `of`, `in`, `on`, `with`, `from`, `is`, `it`, `this`, `that`, `be`, `will`); substring-containment treated as duplicate; topics also use Jaccard word-overlap ≥ 0.45 and are capped at 5.
 
 ## 5. Audio pipeline
 
@@ -195,8 +199,14 @@ struct Recording: Identifiable, Hashable, Codable {
     var segments: [TranscriptSegment]  // diarized + transcribed
     var summary: String?
     var title: String?                  // 3–5 word headline
+    var topics: [Topic]                 // main topics, each with supporting points
+    // Retained for Codable compatibility with older saved recordings, but no longer
+    // populated by the pipeline:
     var decisions: [String]
     var actionItems: [ActionItem]
+    var attendees: [String]
+    var openQuestions: [String]
+    var keyDates: [String]
     var customSpeakerNames: [String: String]  // "Speaker 1" → "Sarah"
 }
 
@@ -208,17 +218,24 @@ struct TranscriptSegment: Identifiable, Hashable, Codable {
     let end: TimeInterval
 }
 
+struct Topic: Identifiable, Hashable, Codable {
+    var id = UUID()
+    var title: String           // 3–6 word label
+    var points: [String]        // 2–3 supporting sentences
+}
+
+// ActionItem still exists for decoding older recordings, but is never produced anymore.
 struct ActionItem: Identifiable, Hashable, Codable {
     var id = UUID()
-    var assignee: String        // speaker label or freeform name
+    var assignee: String
     var task: String
-    var dueDate: String?        // freeform: "Friday", "next Tuesday", nil
+    var dueDate: String?
 }
 ```
 
-Backwards-compat: `Recording.init(from:)` uses `decodeIfPresent` for every field added after the original Phase 4 storage format, so older recordings still load with empty arrays.
+Backwards-compat: `Recording.init(from:)` uses `decodeIfPresent` for every field added after the original Phase 4 storage format, so older recordings still load (deprecated fields decode to whatever was saved; new recordings leave them empty).
 
-Display-time speaker resolution: `Recording.resolveSpeakerReferences(in:)` walks any text and replaces "Speaker N" with the custom display name (longest-label-first so "Speaker 10" doesn't get clobbered by "Speaker 1"). Applied to summary, decisions, action item tasks, and share output. Single source of truth = the `customSpeakerNames` map.
+Display-time speaker resolution: `Recording.resolveSpeakerReferences(in:)` walks any text and replaces "Speaker N" with the custom display name (longest-label-first so "Speaker 10" doesn't get clobbered by "Speaker 1"). Applied to summary, topic points, transcript, and share output. Single source of truth = the `customSpeakerNames` map.
 
 ## 10. UI
 
@@ -269,20 +286,17 @@ Friday, May 31, 2026 at 7:06 PM · 03:42
 ────── SUMMARY ──────
 [prose summary, speaker references resolved]
 
-────── DECISIONS ──────
-• [decision 1]
-• [decision 2]
-
-────── ACTION ITEMS ──────
-• Sarah: Send contract draft (by Friday)
-• Speaker 2: Schedule kickoff (by next Tuesday)
+────── TOPICS ──────
+Topic title
+• [supporting point]
+• [supporting point]
 
 ────── TRANSCRIPT ──────
 Sarah: ...
 Speaker 2: ...
 ```
 
-Empty sections are omitted. Speaker rename map is applied to summary, decisions, action item tasks, and transcript before formatting. Plain text only — the earlier attempt at a Transferable with an HTML representation caused iOS Mail to deliver blank composes.
+Empty sections are omitted, so the now-unused Action Items branch never renders (action items are no longer produced). Speaker rename map is applied to summary, topic points, and transcript before formatting. Plain text only — the earlier attempt at a Transferable with an HTML representation caused iOS Mail to deliver blank composes.
 
 ## 14. Dependencies
 
@@ -310,12 +324,14 @@ Project is generated with **XcodeGen 2.x** from `project.yml`. The `.xcodeproj` 
 
 ## 16. Known limitations
 
-- Apple Foundation Models has a ~4K-token context. Long transcripts are chunked at speaker-turn boundaries; map-reduce can occasionally produce vague summaries on very long meetings (>1 hour).
-- Per-chunk extraction occasionally duplicates items across chunk boundaries; the fuzzy dedupe handles most cases but is not Levenshtein-based.
-- Action item tasks and due dates are read-only at v1 (assignee is tappable to rename the underlying speaker; task and due date editing is not yet wired up).
+- Apple Foundation Models has a ~4K-token context. Long transcripts are chunked at speaker-turn boundaries; hierarchical map-reduce can occasionally produce vague summaries on very long meetings (>1 hour).
+- Topics are fuzzy-deduped (substring + Jaccard ≥ 0.45), not Levenshtein-based, so a near-duplicate phrasing can occasionally slip through.
+- Transcription is windowed at fixed ~2-minute boundaries; a word landing exactly on a window edge can be clipped (rare; no overlap stitching yet).
+- Speaker assignment is by timestamp overlap with diarization, so crosstalk or imprecise diarization boundaries can misattribute a short segment.
 - No way to disable the Face ID gate from inside the app yet (would need a Settings screen). The flag can be flipped via UserDefaults if needed.
 - Imported audio files lose original container metadata (artist, album, etc.) — Parley only cares about the audio samples.
 - Mock summarizer output is bracketed with `[mock summary]` to make it obvious when Apple Intelligence isn't available — on a non-AI device the summary section will look stub-like.
+- The action-items extraction code (`@Generable` types, deadline filtering) remains in `SummarizationService.swift` as unused dead code pending a cleanup sweep.
 
 ## 17. Repo URLs
 
