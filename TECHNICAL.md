@@ -331,7 +331,6 @@ Project is generated with **XcodeGen 2.x** from `project.yml`. The `.xcodeproj` 
 - No way to disable the Face ID gate from inside the app yet (would need a Settings screen). The flag can be flipped via UserDefaults if needed.
 - Imported audio files lose original container metadata (artist, album, etc.) — Parley only cares about the audio samples.
 - Mock summarizer output is bracketed with `[mock summary]` to make it obvious when Apple Intelligence isn't available — on a non-AI device the summary section will look stub-like.
-- The action-items extraction code (`@Generable` types, deadline filtering) remains in `SummarizationService.swift` as unused dead code pending a cleanup sweep.
 
 ## 17. Repo URLs
 

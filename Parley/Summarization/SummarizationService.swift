@@ -58,22 +58,6 @@ struct AppleSummarizationService: SummarizationService {
     // MARK: - Generable mirror types
 
     @Generable
-    struct GenerableActionItems {
-        @Guide(description: "Action items that someone explicitly committed to with a concrete deadline. At most 3 in any single chunk. Quality over quantity — only the most important commitments.")
-        let actionItems: [GenerableActionItem]
-    }
-
-    @Generable
-    struct GenerableActionItem {
-        @Guide(description: "Speaker label (Speaker 1, Speaker 2, ...) of whoever accepted the task. Use 'Unassigned' if no speaker took it on. Do NOT use a person's name.")
-        let assignee: String
-        @Guide(description: "What needs to be done, one short sentence in the imperative.")
-        let task: String
-        @Guide(description: "When it is due — 'Friday', 'next Tuesday', 'end of quarter'. Empty string if no time was mentioned.")
-        let dueDate: String
-    }
-
-    @Generable
     struct GenerableTopics {
         @Guide(description: "3 to 5 main topics discussed. Only the most substantial topics — not minor side comments.")
         let topics: [GenerableTopic]
@@ -240,11 +224,6 @@ struct AppleSummarizationService: SummarizationService {
         catch { return [] }
     }
 
-    private func safeActions(_ chunk: String) async -> [ActionItem] {
-        do { return try await withRetry("action items") { try await extractActionItems(chunk) } }
-        catch { return [] }
-    }
-
     // MARK: - Title
 
     func title(for text: String) async throws -> String {
@@ -343,98 +322,6 @@ struct AppleSummarizationService: SummarizationService {
     }
 
     // MARK: - Per-section extractors
-
-    private func extractActionItems(_ text: String) async throws -> [ActionItem] {
-        let instructions = """
-        Extract action items. STRICT RULE: include ONLY action items where the speaker \
-        gave a CONCRETE, SPECIFIC deadline.
-
-        A concrete deadline names a specific day, date, week, month, quarter, year, or event:
-        - "by Friday" ✓
-        - "next Tuesday" ✓
-        - "before July 1st" ✓
-        - "end of Q3" ✓
-        - "by the launch" ✓
-        - "next week" ✓
-
-        FORBIDDEN — these are NOT deadlines, skip the item entirely:
-        - "soon" / "shortly" / "eventually" / "later"
-        - "immediately" / "ASAP" / "as soon as possible"
-        - "no time mentioned" / "no deadline" / "TBD" / "to be determined"
-        - "when ready" / "when possible" / "when they come through"
-        - "ongoing" / "continuously"
-
-        At most 3 action items per chunk. Be extremely selective — pick ONLY the most \
-        important, time-sensitive commitments. If unsure whether to include something, \
-        leave it out.
-
-        For each item kept:
-        - assignee: speaker label ("Speaker 1", "Speaker 2", ...) of whoever accepted it. \
-        Use "Unassigned" only when no specific speaker took it on.
-        - task: one short imperative sentence.
-        - dueDate: the concrete time reference exactly as stated. MUST name a specific time. \
-        If you cannot give a specific deadline, SKIP THE ITEM. Do NOT fill in "soon" or \
-        "no time mentioned" or any other placeholder.
-
-        Empty array is the correct answer when no items have concrete deadlines. Do NOT \
-        invent items or deadlines.
-        """
-        let session = LanguageModelSession(instructions: instructions)
-        let response = try await session.respond(to: "Transcript:\n\(text)",
-                                                 generating: GenerableActionItems.self)
-        return response.content.actionItems.compactMap { gi -> ActionItem? in
-            let due = gi.dueDate.trimmingCharacters(in: .whitespacesAndNewlines)
-            // Belt-and-braces: even with the prompt, the small on-device model sometimes
-            // slips placeholder strings like "soon" or "no time mentioned" in to bypass
-            // the rule. Filter those out here.
-            guard !due.isEmpty, Self.isConcreteDeadline(due) else { return nil }
-            return ActionItem(
-                assignee: gi.assignee.trimmingCharacters(in: .whitespacesAndNewlines),
-                task: gi.task.trimmingCharacters(in: .whitespacesAndNewlines),
-                dueDate: due
-            )
-        }
-    }
-
-    /// Phrases the model uses to pretend it has a deadline. Reject any due-date string that
-    /// is, or starts with, or ends with, any of these (case-insensitive). Tweakable list.
-    private static let placeholderDueDates: Set<String> = [
-        "soon", "shortly", "eventually", "later", "immediately", "asap",
-        "as soon as possible", "right away",
-        "no time mentioned", "no time specified", "no time", "no deadline",
-        "no date", "not specified", "not mentioned", "unspecified", "undefined",
-        "tbd", "to be determined", "to be decided",
-        "when ready", "when possible", "when they come through",
-        "ongoing", "continuously", "n/a", "none", "any time", "anytime",
-    ]
-
-    /// True if a due-date string looks like a real deadline rather than a placeholder.
-    private static func isConcreteDeadline(_ raw: String) -> Bool {
-        let lowered = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        if lowered.isEmpty { return false }
-        // Exact placeholder match → reject.
-        if placeholderDueDates.contains(lowered) { return false }
-        // "as soon as possible we can…" / "soon, before the launch" — strip leading/trailing
-        // filler and check what's left has real content. Simple heuristic: at least one of
-        // these substrings (day names, month names, period words, numbers).
-        let concreteMarkers = [
-            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-            "january", "february", "march", "april", "may", "june", "july", "august",
-            "september", "october", "november", "december",
-            "week", "month", "quarter", "year", "day", "tomorrow", "tonight",
-            "morning", "afternoon", "evening",
-            "launch", "release", "deadline", "meeting", "deliver",
-            "end of", "beginning of", "mid-", "early", "late",
-            "q1", "q2", "q3", "q4",
-        ]
-        for marker in concreteMarkers where lowered.contains(marker) { return true }
-        // A digit in the string (e.g. "July 1st", "by the 15th") is also a strong signal.
-        if lowered.unicodeScalars.contains(where: { CharacterSet.decimalDigits.contains($0) }) {
-            return true
-        }
-        return false
-    }
-
 
     private func extractTopics(_ text: String) async throws -> [Topic] {
         let instructions = """
@@ -542,33 +429,6 @@ struct AppleSummarizationService: SummarizationService {
         return Double(intersection) / Double(union)
     }
 
-    private static func dedupe(_ items: [ActionItem]) -> [ActionItem] {
-        var out: [ActionItem] = []
-        for item in items {
-            let normTask = normalize(item.task)
-            if let idx = out.firstIndex(where: {
-                let other = normalize($0.task)
-                if other == normTask { return true }
-                if roughlyEqual(other, normTask) { return true }
-                // Lower threshold + ignore-assignee match: catches rewordings AND cases
-                // where the model attributed the same commitment to different speakers
-                // across chunks.
-                return wordOverlapRatio(other, normTask) >= 0.45
-            }) {
-                // Prefer the longer task wording; if the kept one was Unassigned and the
-                // duplicate names a specific speaker, take the named one.
-                let existing = out[idx]
-                let existingUnassigned = existing.assignee.lowercased() == "unassigned"
-                let newNamed = item.assignee.lowercased() != "unassigned"
-                if item.task.count > existing.task.count || (existingUnassigned && newNamed) {
-                    out[idx] = item
-                }
-            } else {
-                out.append(item)
-            }
-        }
-        return out
-    }
 
 
     /// Topics: fuzzy-match titles. Uses substring + Jaccard overlap, same approach as
